@@ -186,15 +186,15 @@ struct ContentView: View {
                 .padding(.horizontal, 15)
 
                 // 5. 快捷按钮
-                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
-                    LocationButton(name: "DUBAI", lat: "25.185317", lon: "55.281516", color: .orange)
-                    LocationButton(name: "Abu Dhabi", lat: "24.340142", lon: "54.518667", color: .blue)
-                    LocationButton(name: "HANOI", lat: "20.992498", lon: "105.944606", color: .purple)
-                    LocationButton(name: "TOKYO", lat: "35.6895", lon: "139.6917", color: .pink)
-                    LocationButton(name: "NYC", lat: "40.7128", lon: "-74.0060", color: .cyan)
-                    LocationButton(name: "LDN", lat: "51.5074", lon: "-0.1278", color: .green)
-                    LocationButton(name: "PARIS", lat: "48.8566", lon: "2.3522", color: .indigo)
-                    LocationButton(name: "SHENZHEN", lat: "22.5431", lon: "114.0579", color: .red)
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+                    LocationButton(flag: "🇦🇪", name: "DUBAI",      lat: "25.185317", lon: "55.281516",  color: .orange)
+                    LocationButton(flag: "🇦🇪", name: "Abu Dhabi",  lat: "24.340142", lon: "54.518667",  color: .blue)
+                    LocationButton(flag: "🇻🇳", name: "Hanoi",      lat: "20.992498", lon: "105.944606", color: .purple)
+                    LocationButton(flag: "🇯🇵", name: "Tokyo",      lat: "35.6895",   lon: "139.6917",   color: .pink)
+                    LocationButton(flag: "🇺🇸", name: "New York",   lat: "40.7128",   lon: "-74.0060",   color: .cyan)
+                    LocationButton(flag: "🇬🇧", name: "London",     lat: "51.5074",   lon: "-0.1278",    color: .green)
+                    LocationButton(flag: "🇫🇷", name: "Paris",      lat: "48.8566",   lon: "2.3522",     color: .indigo)
+                    LocationButton(flag: "🇨🇳", name: "Shenzhen",   lat: "22.5431",   lon: "114.0579",   color: .red)
                 }
                 .padding(.horizontal, 15)
 
@@ -670,7 +670,7 @@ struct ContentView: View {
         }
     }
 
-    func LocationButton(name: String, lat: String, lon: String, color: Color) -> some View {
+    func LocationButton(flag: String, name: String, lat: String, lon: String, color: Color) -> some View {
         Button(action: {
             if let lLat = Double(lat), let lLon = Double(lon) {
                 self.region.center = CLLocationCoordinate2D(latitude: lLat, longitude: lLon)
@@ -679,26 +679,45 @@ struct ContentView: View {
                 self.log("[USER] Selected Preset: \(name)")
             }
         }) {
-            Text(name)
-                .font(.system(size: 10, weight: .bold, design: .monospaced))
-                .foregroundColor(.primary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 10)
-                .background(
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .fill(color.opacity(0.45))
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .fill(.regularMaterial)
-                    }
-                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .strokeBorder(color.opacity(0.55), lineWidth: 1)
-                )
+            VStack(spacing: 3) {
+                Text(flag)
+                    .font(.system(size: 20))
+                Text(name)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.primary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+            .background(
+                ZStack {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [color.opacity(0.55), color.opacity(0.28)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(.regularMaterial)
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [Color.white.opacity(0.18), Color.clear],
+                                startPoint: .top,
+                                endPoint: .center
+                            )
+                        )
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(color.opacity(0.50), lineWidth: 1)
+            )
+            .shadow(color: color.opacity(0.18), radius: 5, x: 0, y: 2)
         }.buttonStyle(.plain)
     }
 }
