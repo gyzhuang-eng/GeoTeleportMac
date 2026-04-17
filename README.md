@@ -15,6 +15,7 @@
 - **⚡️ 一键传送** — 调用已安装的 `pymobiledevice3` 向已连接 iPhone 注入 `simulate-location`
 - **🪟 iOS 风格玻璃 UI** — `.regularMaterial` / `.thickMaterial` + 彩色光斑氛围层，深色自适应
 - **🔌 USB 热插拔监听** — 原生 `ioreg` 扫描，2 秒内自动反馈 "HARDWARE CONNECTED"
+- **📱 iOS 版本识别** — 自动读取 `ProductVersion`，iOS 17+ 弹提示横幅 + 一键复制 tunneld 命令
 - **🔁 依赖自动扫描 + 手动重扫** — 内置 `which -a` 兜底，覆盖 Homebrew 与 Python 3.9–3.13 用户级安装
 - **✅ 坐标校验** — LAT ∈ [-90, 90]、LON ∈ [-180, 180]，非法值实时红边并禁用传送
 - **💾 状态持久化** — 上次坐标与搜索词通过 `@AppStorage` 跨启动保留
@@ -55,7 +56,29 @@ pip3 install pymobiledevice3
 
 iOS 16+ 需要在手机上：**Settings → Privacy & Security → Developer Mode → ON**，重启后信任此电脑。
 
-### 4. 构建与运行
+### 4. iOS 版本兼容性
+
+| iOS 版本 | 是否可用 | 说明 |
+| --- | :---: | --- |
+| iOS ≤ 16 | ✅ | 直接可用，App 自己搞定所有事 |
+| iOS 17 / 18 / **26** | ⚠️ | 需要额外先启动 **tunneld**（见下节） |
+| **Android / HarmonyOS** | ❌ | 完全不支持。pymobiledevice3 只讲 Apple 协议栈（usbmux / lockdownd / RemoteXPC），安卓请改用 ADB + mock location |
+
+#### 🔐 iOS 17+ 专用步骤：启动 tunneld
+
+Apple 从 iOS 17 开始把 DeveloperDiskImage 换成了 RemoteXPC 隧道，所有 `developer` 子命令都必须走这条隧道；且隧道需要 root 权限才能建立。
+
+**每次要传送前**，在一个独立终端执行（保持打开）：
+
+```bash
+sudo python3 -m pymobiledevice3 remote tunneld
+```
+
+输入 Mac 密码后会阻塞运行——**不要关**。回到 App 点 🔄 Rescan，再点 CONFIRM & JUMP 即可。
+
+> App 检测到 iOS ≥ 17 时，会在顶栏下方自动弹出一个提示横幅，带一键复制命令按钮。
+
+### 5. 构建与运行
 
 ```bash
 git clone https://github.com/gyzhuang-eng/GeoTeleportMac.git

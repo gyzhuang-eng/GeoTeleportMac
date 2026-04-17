@@ -2,6 +2,7 @@ import SwiftUI
 import MapKit
 import CoreLocation
 import Combine
+import AppKit
 
 // MARK: - V9.2 · Glass UI · Bounded log · Rescan · Validated coords
 
@@ -25,6 +26,11 @@ struct ContentView: View {
     @State private var detectedCliPath: String = ""
     @State private var isEnvironmentReady: Bool = false
     @State private var isScanningDeps: Bool = false
+
+    // iOS 版本（用于 iOS 17+ tunneld 提示）
+    @State private var deviceIOSVersion: String = ""
+    @State private var deviceIOSMajor: Int = 0
+    @State private var tunneldHintDismissed: Bool = false
 
     @State private var region = MKCoordinateRegion(
         center: CLLocationCoordinate2D(latitude: 25.185317, longitude: 55.281516),
@@ -122,6 +128,12 @@ struct ContentView: View {
                 }
                 .padding(.horizontal, 15)
                 .padding(.top, 12)
+
+                // 1b. iOS 17+ tunneld 提示横幅
+                if isDeviceConnected && deviceIOSMajor >= 17 && !tunneldHintDismissed {
+                    tunneldBanner
+                        .padding(.horizontal, 15)
+                }
 
                 // 2. 地图区
                 ZStack {
@@ -293,6 +305,99 @@ struct ContentView: View {
             )
     }
 
+    // iOS 17+ tunneld 提示横幅
+    private var tunneldBanner: some View {
+        let cmd = "sudo python3 -m pymobiledevice3 remote tunneld"
+        return HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 14))
+                .foregroundColor(.yellow)
+                .padding(.top, 2)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("iOS \(deviceIOSVersion) detected — tunneld required")
+                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                    .foregroundColor(.primary)
+                Text("In Terminal, run this once and keep it open:")
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                HStack(spacing: 6) {
+                    Text(cmd)
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(terminalGreen)
+                        .textSelection(.enabled)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    Button {
+                        let pb = NSPasteboard.general
+                        pb.clearContents()
+                        pb.setString(cmd, forType: .string)
+                        log("[HINT] Copied tunneld command to clipboard")
+                    } label: {
+                        Image(systemName: "doc.on.doc")
+                            .font(.system(size: 10))
+                            .foregroundColor(accentBlue)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Copy command")
+                }
+                .padding(.horizontal, 8).padding(.vertical, 5)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(Color.black.opacity(0.35))
+                )
+            }
+            Spacer()
+            Button {
+                tunneldHintDismissed = true
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("Dismiss")
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(.regularMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Color.yellow.opacity(0.08))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(Color.yellow.opacity(0.45), lineWidth: 1)
+                )
+        )
+    }
+
+    // 查询 iOS 版本；仅在 CLI 已就位且设备连接时有意义
+    private func fetchDeviceIOSVersion() {
+        guard !detectedCliPath.isEmpty else { return }
+        DispatchQueue.global(qos: .background).async {
+            guard let out = self.runCaptured(self.detectedCliPath, args: ["lockdown", "info"]) else { return }
+            // ProductVersion: "17.2.1" 或 ProductVersion = "26.0" 或 "ProductVersion": "26.0"
+            let pattern = #"ProductVersion["\s:=]+["']?([0-9]+(?:\.[0-9]+)*)"#
+            guard let re = try? NSRegularExpression(pattern: pattern),
+                  let m = re.firstMatch(in: out, range: NSRange(out.startIndex..., in: out)),
+                  m.numberOfRanges >= 2,
+                  let r = Range(m.range(at: 1), in: out) else { return }
+            let version = String(out[r])
+            let major = Int(version.split(separator: ".").first ?? "0") ?? 0
+            DispatchQueue.main.async {
+                if self.deviceIOSVersion != version {
+                    self.log("[DEVICE] iOS \(version) detected")
+                    if major >= 17 {
+                        self.log("[DEVICE] ⚠️ iOS 17+ requires tunneld — see banner")
+                    }
+                }
+                self.deviceIOSVersion = version
+                self.deviceIOSMajor = major
+            }
+        }
+    }
+
     // MARK: - 逻辑
 
     func buttonTitle() -> String {
@@ -411,12 +516,20 @@ struct ContentView: View {
                 let output = String(data: data, encoding: .utf8) ?? ""
                 let hasDevice = output.contains("iPhone")
                 DispatchQueue.main.async {
+                    let becameConnected = hasDevice && !self.isDeviceConnected
                     if hasDevice != self.isDeviceConnected {
                         self.log("[HARDWARE] I/O Registry Update:")
                         self.log(hasDevice ? "[HARDWARE] + DEVICE ATTACHED (iPhone)" : "[HARDWARE] - DEVICE REMOVED")
                     }
                     self.isDeviceConnected = hasDevice
                     self.connectionStatusText = hasDevice ? "READY TO INJECT" : "CONNECT VIA USB CABLE"
+                    if !hasDevice {
+                        self.deviceIOSVersion = ""
+                        self.deviceIOSMajor = 0
+                        self.tunneldHintDismissed = false
+                    } else if becameConnected && self.isEnvironmentReady {
+                        self.fetchDeviceIOSVersion()
+                    }
                 }
             } catch {
                 DispatchQueue.main.async { self.isDeviceConnected = false }
