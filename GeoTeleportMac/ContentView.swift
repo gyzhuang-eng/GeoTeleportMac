@@ -4,7 +4,14 @@ import CoreLocation
 import Combine
 import AppKit
 
-// MARK: - V9.2 · Glass UI · Bounded log · Rescan · Validated coords
+// MARK: - V9.3 · Single-message status card · Collapsible debug log
+
+enum AppStatus: Equatable {
+    case idle
+    case working(String, String?)
+    case success(String, String?)
+    case failure(String, String?)
+}
 
 struct ContentView: View {
     // 坐标（持久化）
@@ -31,6 +38,11 @@ struct ContentView: View {
     @State private var deviceIOSVersion: String = ""
     @State private var deviceIOSMajor: Int = 0
     @State private var tunneldHintDismissed: Bool = false
+
+    // 用户可见的单条状态
+    @State private var status: AppStatus = .idle
+    @State private var showDebugLog: Bool = false
+    @State private var successToken: Int = 0
 
     @State private var region = MKCoordinateRegion(
         center: CLLocationCoordinate2D(latitude: 25.185317, longitude: 55.281516),
@@ -231,50 +243,22 @@ struct ContentView: View {
                 .padding(.horizontal, 15)
                 .disabled(isWorking || !isDeviceConnected || !isEnvironmentReady || !coordsValid)
 
-                // 7. 日志区
-                VStack(alignment: .leading, spacing: 0) {
-                    HStack {
-                        Text("SYSTEM_DEBUG_STREAM (VERBOSE)")
-                            .font(.system(size: 9, weight: .semibold, design: .monospaced)).foregroundColor(.secondary)
-                        Spacer()
-                        Text("\(consoleLogs.count)/\(maxLogLines)")
-                            .font(.system(size: 9, design: .monospaced))
-                            .foregroundColor(.secondary.opacity(0.6))
-                        Button(action: { consoleLogs = [">>> LOG CLEARED."] }) {
-                            Image(systemName: "trash").font(.system(size: 10)).foregroundColor(.secondary)
-                        }.buttonStyle(.plain)
-                    }
-                    .padding(.horizontal, 12).padding(.top, 8).padding(.bottom, 4)
+                // 7. 状态卡（用户只看这一条）
+                statusCard
+                    .padding(.horizontal, 15)
 
-                    ScrollViewReader { proxy in
-                        ScrollView {
-                            Text(consoleLogs.joined(separator: "\n"))
-                                .font(.system(size: 10, design: .monospaced))
-                                .foregroundColor(terminalGreen)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(10)
-                                .textSelection(.enabled)
-                                .id("logBottom")
-                        }
-                        .onChange(of: consoleLogs.count) { _, _ in
-                            withAnimation { proxy.scrollTo("logBottom", anchor: .bottom) }
-                        }
-                    }
+                // 8. 可选：Debug 日志（默认折叠）
+                if showDebugLog {
+                    debugLogPanel
+                        .padding(.horizontal, 15)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                } else {
+                    Spacer(minLength: 0)
                 }
-                .background(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(Color.black.opacity(0.55))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
-                )
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .padding(.horizontal, 15)
-                .padding(.bottom, 12)
             }
+            .padding(.bottom, 12)
         }
-        .frame(minWidth: 450, minHeight: 750)
+        .frame(minWidth: 450, minHeight: showDebugLog ? 750 : 620)
         .onReceive(timer) { _ in checkUSBConnection() }
         .onAppear {
             logSystemInfo()
@@ -303,6 +287,212 @@ struct ContentView: View {
             .overlay(
                 Capsule().strokeBorder(tint.opacity(0.45), lineWidth: 1)
             )
+    }
+
+    // MARK: - Status card
+
+    private struct StatusDisplay {
+        let title: String
+        let subtitle: String?
+        let icon: String
+        let tint: Color
+        let showSpinner: Bool
+    }
+
+    private var statusDisplay: StatusDisplay {
+        switch status {
+        case .idle:
+            if !isEnvironmentReady {
+                return StatusDisplay(
+                    title: "pymobiledevice3 is not installed",
+                    subtitle: "Run `pip3 install pymobiledevice3` in Terminal, then press Rescan.",
+                    icon: "wrench.adjustable",
+                    tint: alertRed,
+                    showSpinner: false)
+            }
+            if !isDeviceConnected {
+                return StatusDisplay(
+                    title: "Connect your iPhone",
+                    subtitle: "Plug in via USB and trust this Mac on the device.",
+                    icon: "iphone.gen3.slash",
+                    tint: alertRed,
+                    showSpinner: false)
+            }
+            if !coordsValid {
+                return StatusDisplay(
+                    title: "Invalid coordinates",
+                    subtitle: "Latitude must be −90…90, longitude must be −180…180.",
+                    icon: "exclamationmark.triangle.fill",
+                    tint: Color(red: 1.0, green: 0.80, blue: 0.30),
+                    showSpinner: false)
+            }
+            return StatusDisplay(
+                title: "Ready to teleport",
+                subtitle: "Drag the pin, search a city, or tap a preset.",
+                icon: "checkmark.seal.fill",
+                tint: terminalGreen,
+                showSpinner: false)
+        case .working(let t, let s):
+            return StatusDisplay(title: t, subtitle: s, icon: "bolt.circle.fill", tint: accentBlue, showSpinner: true)
+        case .success(let t, let s):
+            return StatusDisplay(title: t, subtitle: s, icon: "checkmark.circle.fill", tint: terminalGreen, showSpinner: false)
+        case .failure(let t, let s):
+            return StatusDisplay(title: t, subtitle: s, icon: "xmark.octagon.fill", tint: alertRed, showSpinner: false)
+        }
+    }
+
+    private var statusCard: some View {
+        let d = statusDisplay
+        return HStack(alignment: .center, spacing: 12) {
+            ZStack {
+                Circle()
+                    .fill(d.tint.opacity(0.22))
+                    .frame(width: 40, height: 40)
+                if d.showSpinner {
+                    ProgressView()
+                        .controlSize(.small)
+                        .progressViewStyle(.circular)
+                        .tint(d.tint)
+                } else {
+                    Image(systemName: d.icon)
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundColor(d.tint)
+                }
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(d.title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(.primary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                if let s = d.subtitle, !s.isEmpty {
+                    Text(s)
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer()
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) { showDebugLog.toggle() }
+            } label: {
+                HStack(spacing: 3) {
+                    Text("Log")
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundColor(.secondary)
+                    Image(systemName: showDebugLog ? "chevron.down" : "chevron.up")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundColor(.secondary)
+                }
+                .padding(.horizontal, 8).padding(.vertical, 4)
+                .background(
+                    Capsule().fill(Color.white.opacity(0.06))
+                )
+                .overlay(
+                    Capsule().strokeBorder(Color.white.opacity(0.10), lineWidth: 1)
+                )
+            }
+            .buttonStyle(.plain)
+            .help(showDebugLog ? "Hide debug log" : "Show debug log")
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(.regularMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(d.tint.opacity(0.08))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(d.tint.opacity(0.30), lineWidth: 1)
+                )
+        )
+    }
+
+    private var debugLogPanel: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("DEBUG LOG")
+                    .font(.system(size: 9, weight: .semibold, design: .monospaced)).foregroundColor(.secondary)
+                Spacer()
+                Text("\(consoleLogs.count)/\(maxLogLines)")
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundColor(.secondary.opacity(0.6))
+                Button(action: { consoleLogs = [">>> LOG CLEARED."] }) {
+                    Image(systemName: "trash").font(.system(size: 10)).foregroundColor(.secondary)
+                }.buttonStyle(.plain)
+            }
+            .padding(.horizontal, 12).padding(.top, 8).padding(.bottom, 4)
+
+            ScrollViewReader { proxy in
+                ScrollView {
+                    Text(consoleLogs.joined(separator: "\n"))
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(terminalGreen)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(10)
+                        .textSelection(.enabled)
+                        .id("logBottom")
+                }
+                .onChange(of: consoleLogs.count) { _, _ in
+                    withAnimation { proxy.scrollTo("logBottom", anchor: .bottom) }
+                }
+            }
+        }
+        .frame(minHeight: 160)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.black.opacity(0.55))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    // 设置用户可见状态；.success 会在 5s 后自动淡回 .idle（可被新状态打断）
+    private func setStatus(_ s: AppStatus) {
+        DispatchQueue.main.async {
+            withAnimation(.easeInOut(duration: 0.18)) { self.status = s }
+            if case .success = s {
+                self.successToken &+= 1
+                let token = self.successToken
+                DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+                    if self.successToken == token, case .success = self.status {
+                        withAnimation(.easeInOut(duration: 0.25)) { self.status = .idle }
+                    }
+                }
+            }
+        }
+    }
+
+    // 把 stderr/stdout 压成一句人话；识别最常见的几类错误
+    private func humanize(stderr: String, stdout: String, exit: Int32) -> String {
+        let combined = (stderr + "\n" + stdout).lowercased()
+        if combined.contains("tunneld") || combined.contains("rsd") || combined.contains("no developer mode") {
+            return "iOS 17+ tunnel isn't running. Start it in Terminal first."
+        }
+        if combined.contains("not paired") || combined.contains("pairing") {
+            return "Device isn't paired — trust this Mac on the iPhone."
+        }
+        if combined.contains("permission") || combined.contains("denied") {
+            return "Permission denied — check Developer Mode and pairing."
+        }
+        if combined.contains("no device") || combined.contains("not connected") {
+            return "Device disappeared during injection."
+        }
+        let first = stderr
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .first
+            .map(String.init)?
+            .trimmingCharacters(in: .whitespaces) ?? ""
+        if !first.isEmpty {
+            return first.count > 120 ? String(first.prefix(117)) + "…" : first
+        }
+        return "Exit code \(exit)."
     }
 
     // iOS 17+ tunneld 提示横幅
@@ -433,6 +623,7 @@ struct ContentView: View {
     func findDependency() {
         if isScanningDeps { return }
         isScanningDeps = true
+        setStatus(.working("Looking for pymobiledevice3…", nil))
         log("------------------------------------------")
         log("[INIT] Starting Dependency Scan...")
 
@@ -467,6 +658,7 @@ struct ContentView: View {
                         self.isScanningDeps = false
                     }
                     self.log("[SCAN] ✅ FOUND executable.")
+                    self.setStatus(.idle)
                     return
                 } else {
                     self.log("[SCAN] ❌ Not found")
@@ -481,6 +673,7 @@ struct ContentView: View {
             self.log("[INIT] CRITICAL FAILURE: 'pymobiledevice3' not found.")
             self.log("[HELP] Install via Terminal: pip3 install pymobiledevice3")
             self.log("------------------------------------------")
+            self.setStatus(.idle)
         }
     }
 
@@ -540,6 +733,7 @@ struct ContentView: View {
     func searchCityOnly() {
         let query = citySearchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return }
+        setStatus(.working("Looking up \"\(query)\"…", nil))
         log("------------------------------------------")
         log("[GEO] Processing User Query: '\(query)'")
         log("[GEO] Querying MapKit Geocoder...")
@@ -548,6 +742,7 @@ struct ContentView: View {
                 let request = MKGeocodingRequest(addressString: query)
                 guard let items = try await request?.mapItems, let item = items.first else {
                     self.log("[GEO] ❌ No results")
+                    self.setStatus(.failure("Couldn't find \"\(query)\"", "Check spelling or try a nearby landmark."))
                     return
                 }
                 let coord = item.location.coordinate
@@ -557,11 +752,13 @@ struct ContentView: View {
                     self.latitude = String(format: "%.6f", coord.latitude)
                     self.longitude = String(format: "%.6f", coord.longitude)
                 }
-                let name = item.name ?? "?"
+                let name = item.name ?? query
                 self.log("[GEO] ✅ Result: \(name)")
                 self.log("[GEO] Coords: \(String(format: "%.6f", coord.latitude)), \(String(format: "%.6f", coord.longitude))")
+                self.setStatus(.idle)
             } catch {
                 self.log("[GEO] ❌ ERROR: \(error.localizedDescription)")
+                self.setStatus(.failure("Search failed", error.localizedDescription))
             }
         }
     }
@@ -574,8 +771,10 @@ struct ContentView: View {
         }
         guard coordsValid else {
             log("[USER] ❌ Coordinate validation failed — aborting")
+            setStatus(.failure("Invalid coordinates", "Fix LAT / LON before teleporting."))
             return
         }
+        setStatus(.working("Teleporting…", "\(latitude), \(longitude)"))
         log("------------------------------------------")
         log("[USER] 🖱️ ACTION: EXECUTE JUMP CLICKED")
         log("[KERNEL] 🛰️ TARGET LOCK ACQUIRED")
@@ -588,6 +787,7 @@ struct ContentView: View {
     func executeCommand(args: [String]) {
         guard !detectedCliPath.isEmpty else {
             log("[ERROR] Abort: CLI Path is empty.")
+            setStatus(.failure("Teleport failed", "pymobiledevice3 path missing."))
             return
         }
 
@@ -599,7 +799,10 @@ struct ContentView: View {
 
             if ProcessInfo.processInfo.environment["XCODE_RUNNING_FOR_PREVIEWS"] == "1" {
                 Thread.sleep(forTimeInterval: 0.5)
-                self.log("[PREVIEW] Simulation success."); DispatchQueue.main.async { self.isWorking = false }; return
+                self.log("[PREVIEW] Simulation success.")
+                self.setStatus(.success("GPS moved", "\(self.latitude), \(self.longitude)"))
+                DispatchQueue.main.async { self.isWorking = false }
+                return
             }
 
             let task = Process()
@@ -637,10 +840,17 @@ struct ContentView: View {
 
                 self.log("[SYS] Process Exited. Code: \(task.terminationStatus)")
 
-                if task.terminationStatus == 0 { self.log("[RESULT] ✅ SUCCESS: Signal Injected.") }
-                else { self.log("[RESULT] ❌ FAILURE: Non-zero exit code.") }
+                if task.terminationStatus == 0 {
+                    self.log("[RESULT] ✅ SUCCESS: Signal Injected.")
+                    self.setStatus(.success("GPS moved", "\(self.latitude), \(self.longitude)"))
+                } else {
+                    self.log("[RESULT] ❌ FAILURE: Non-zero exit code.")
+                    let reason = self.humanize(stderr: errorOutput, stdout: output, exit: task.terminationStatus)
+                    self.setStatus(.failure("Teleport failed", reason))
+                }
             } catch {
                 self.log("[EXCEPTION] \(error.localizedDescription)")
+                self.setStatus(.failure("Teleport failed", error.localizedDescription))
             }
             self.log("------------------------------------------")
             DispatchQueue.main.async { self.isWorking = false }
