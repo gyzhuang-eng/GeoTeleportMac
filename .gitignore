@@ -1,9 +1,13 @@
 .DS_Store
 UserInterfaceState.xcuserstate
+*.xcuserstate
 xcuserdata/
 DerivedData/
+build/
 .build/
 .swiftpm/
 *.ipa
 *.app
+*.hmap
 *.dSYM
+*.dSYM.zip
