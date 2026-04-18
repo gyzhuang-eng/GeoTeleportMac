@@ -43,6 +43,15 @@ struct ContentView: View {
     // iOS 17+ 未启 tunneld → 拒绝传送（否则 pymobiledevice3 会假成功）
     private var needsTunneld: Bool { deviceIOSMajor >= 17 && !tunneldRunning }
 
+    // 组装 tunneld 命令：优先用已检测到的可执行文件绝对路径，避免多 Python
+    // 解释器环境下 `python3 -m pymobiledevice3` 找不到模块的问题
+    private var tunneldCommand: String {
+        if !detectedCliPath.isEmpty {
+            return "sudo \(detectedCliPath) remote tunneld"
+        }
+        return "sudo python3 -m pymobiledevice3 remote tunneld"
+    }
+
     // 用户可见的单条状态
     @State private var status: AppStatus = .idle
     @State private var showDebugLog: Bool = false
@@ -329,7 +338,7 @@ struct ContentView: View {
             if needsTunneld {
                 return StatusDisplay(
                     title: "iOS \(deviceIOSVersion) needs the tunnel first",
-                    subtitle: "In Terminal: sudo python3 -m pymobiledevice3 remote tunneld — keep it running.",
+                    subtitle: "Click Launch in the yellow banner — or run the command shown there in Terminal.",
                     icon: "lock.shield.fill",
                     tint: Color(red: 1.0, green: 0.80, blue: 0.30),
                     showSpinner: false)
@@ -513,7 +522,7 @@ struct ContentView: View {
 
     // iOS 17+ tunneld 提示横幅
     private var tunneldBanner: some View {
-        let cmd = "sudo python3 -m pymobiledevice3 remote tunneld"
+        let cmd = tunneldCommand
         return HStack(alignment: .top, spacing: 10) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .font(.system(size: 14))
@@ -862,7 +871,7 @@ struct ContentView: View {
             log("[USER] ❌ iOS \(deviceIOSVersion) requires tunneld — aborting")
             setStatus(.failure(
                 "iOS \(deviceIOSVersion) tunnel isn't running",
-                "pymobiledevice3 would silently no-op. Click Launch in the yellow banner, or run: sudo python3 -m pymobiledevice3 remote tunneld"
+                "pymobiledevice3 would silently no-op. Click Launch in the yellow banner."
             ))
             tunneldHintDismissed = false
             return
