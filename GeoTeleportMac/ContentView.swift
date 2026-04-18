@@ -160,26 +160,63 @@ struct ContentView: View {
                         .padding(.horizontal, 15)
                 }
 
-                // 2. 地图区
+                // 2. 地图区 — 占据主要交互空间，随窗口高度自适应
                 ZStack {
                     NativeMapView(region: $region) { newCenter in
                         self.latitude = String(format: "%.6f", newCenter.latitude)
                         self.longitude = String(format: "%.6f", newCenter.longitude)
                     }
-                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                     .overlay(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .strokeBorder(Color.white.opacity(0.10), lineWidth: 1)
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
                     )
-                    .shadow(color: Color.black.opacity(0.35), radius: 14, x: 0, y: 6)
+                    .shadow(color: Color.black.opacity(0.40), radius: 18, x: 0, y: 8)
 
+                    // 中心准星 —— 带阴影 + 描边，任何底图上都清晰可见
                     ZStack {
-                        Circle().stroke(accentBlue.opacity(0.85), lineWidth: 1.5).frame(width: 22, height: 22)
-                        Image(systemName: "plus").font(.system(size: 14, weight: .regular)).foregroundColor(.white)
-                        Image(systemName: "triangle.fill").font(.system(size: 10)).foregroundColor(.red).rotationEffect(.degrees(180)).offset(y: 14)
-                    }.allowsHitTesting(false)
+                        Circle()
+                            .stroke(Color.white.opacity(0.95), lineWidth: 2)
+                            .frame(width: 30, height: 30)
+                            .shadow(color: .black.opacity(0.55), radius: 3, x: 0, y: 1)
+                        Circle()
+                            .fill(accentBlue)
+                            .frame(width: 8, height: 8)
+                            .shadow(color: accentBlue.opacity(0.9), radius: 6)
+                        Image(systemName: "mappin")
+                            .font(.system(size: 22, weight: .bold))
+                            .foregroundColor(.red)
+                            .shadow(color: .black.opacity(0.6), radius: 3, x: 0, y: 2)
+                            .offset(y: -18)
+                    }
+                    .allowsHitTesting(false)
+
+                    // 左下角当前坐标 HUD —— 用户拖图时实时反馈
+                    VStack {
+                        Spacer()
+                        HStack {
+                            HStack(spacing: 6) {
+                                Image(systemName: "location.fill")
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundColor(accentBlue)
+                                Text("\(latitude), \(longitude)")
+                                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                    .foregroundColor(.primary)
+                            }
+                            .padding(.horizontal, 10).padding(.vertical, 6)
+                            .background(
+                                Capsule()
+                                    .fill(.regularMaterial)
+                                    .overlay(Capsule().strokeBorder(Color.white.opacity(0.14), lineWidth: 1))
+                            )
+                            Spacer()
+                        }
+                        .padding(10)
+                    }
+                    .allowsHitTesting(false)
                 }
-                .frame(height: 220)
+                .frame(minHeight: showDebugLog ? 240 : 320, maxHeight: .infinity)
+                .layoutPriority(1)
                 .padding(.horizontal, 15)
 
                 // 3. 搜索栏
@@ -260,18 +297,17 @@ struct ContentView: View {
                 statusCard
                     .padding(.horizontal, 15)
 
-                // 8. 可选：Debug 日志（默认折叠）
+                // 8. 可选：Debug 日志（默认折叠, 固定高度 180, 内部滚动)
                 if showDebugLog {
                     debugLogPanel
+                        .frame(height: 180)
                         .padding(.horizontal, 15)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
-                } else {
-                    Spacer(minLength: 0)
                 }
             }
             .padding(.bottom, 12)
         }
-        .frame(minWidth: 450, minHeight: showDebugLog ? 750 : 620)
+        .frame(minWidth: 540, minHeight: 720)
         .onReceive(timer) { _ in
             checkUSBConnection()
             checkTunneld()
@@ -466,7 +502,6 @@ struct ContentView: View {
                 }
             }
         }
-        .frame(minHeight: 160)
         .background(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(Color.black.opacity(0.55))
@@ -1081,7 +1116,16 @@ struct NativeMapView: NSViewRepresentable {
     @Binding var region: MKCoordinateRegion
     var onRegionChange: (CLLocationCoordinate2D) -> Void
     func makeNSView(context: Context) -> MKMapView {
-        let mapView = MKMapView(); mapView.delegate = context.coordinator; mapView.mapType = .standard; mapView.showsUserLocation = false; mapView.isRotateEnabled = false; mapView.isPitchEnabled = false; return mapView
+        let mapView = MKMapView()
+        mapView.delegate = context.coordinator
+        mapView.mapType = .standard
+        mapView.showsUserLocation = false
+        mapView.isRotateEnabled = false
+        mapView.isPitchEnabled = false
+        mapView.showsZoomControls = true
+        mapView.showsCompass = true
+        mapView.showsScale = true
+        return mapView
     }
     func updateNSView(_ nsView: MKMapView, context: Context) {
         let d = abs(nsView.centerCoordinate.latitude - region.center.latitude) + abs(nsView.centerCoordinate.longitude - region.center.longitude)
