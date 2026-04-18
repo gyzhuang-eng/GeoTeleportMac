@@ -15,7 +15,8 @@
 - **⚡️ 一键传送** — 调用已安装的 `pymobiledevice3` 向已连接 iPhone 注入 `simulate-location`
 - **🪟 iOS 风格玻璃 UI** — `.regularMaterial` / `.thickMaterial` + 彩色光斑氛围层，深色自适应
 - **🔌 USB 热插拔监听** — 原生 `ioreg` 扫描，2 秒内自动反馈 "HARDWARE CONNECTED"
-- **📱 iOS 版本识别** — 自动读取 `ProductVersion`，iOS 17+ 弹提示横幅 + 一键复制 tunneld 命令
+- **📱 iOS 版本识别** — 自动读取 `ProductVersion`；iOS 17+ 自动弹提示横幅，**一键 Launch Terminal** 直接帮你开好 tunneld 窗口，只差输 sudo 密码
+- **🛡️ 防假成功** — 实测 pymobiledevice3 在 iOS 17+ 无 tunneld 时会 exit 0 不报错但 GPS 实际没动；App 增加两层守卫：① 前置 `pgrep` 检测 tunneld，没跑就禁用 Jump 并把状态卡显示为"Start tunneld first"；② 即使 exit 0，只要 stderr 含 `rsd / tunneld / traceback` 等关键词，也翻案为失败并给人话原因
 - **🔁 依赖自动扫描 + 手动重扫** — 内置 `which -a` 兜底，覆盖 Homebrew 与 Python 3.9–3.13 用户级安装
 - **✅ 坐标校验** — LAT ∈ [-90, 90]、LON ∈ [-180, 180]，非法值实时红边并禁用传送
 - **💾 状态持久化** — 上次坐标与搜索词通过 `@AppStorage` 跨启动保留
@@ -69,15 +70,15 @@ iOS 16+ 需要在手机上：**Settings → Privacy & Security → Developer Mod
 
 Apple 从 iOS 17 开始把 DeveloperDiskImage 换成了 RemoteXPC 隧道，所有 `developer` 子命令都必须走这条隧道；且隧道需要 root 权限才能建立。
 
-**每次要传送前**，在一个独立终端执行（保持打开）：
+**App 会自动帮你搞定**：检测到 iOS ≥ 17 时，顶栏下方会弹黄色横幅，点 **Launch** 按钮即自动打开 Terminal 并预填命令，你只需要输 Mac 密码，窗口保持打开即可。
+
+也可以手动：
 
 ```bash
 sudo python3 -m pymobiledevice3 remote tunneld
 ```
 
-输入 Mac 密码后会阻塞运行——**不要关**。回到 App 点 🔄 Rescan，再点 CONFIRM & JUMP 即可。
-
-> App 检测到 iOS ≥ 17 时，会在顶栏下方自动弹出一个提示横幅，带一键复制命令按钮。
+tunneld 一旦跑起来，状态卡和横幅会自动消失，Jump 按钮解锁。**不要关那个 Terminal 窗口**——关了就断了。
 
 ### 5. 构建与运行
 

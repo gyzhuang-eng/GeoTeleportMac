@@ -38,6 +38,10 @@ struct ContentView: View {
     @State private var deviceIOSVersion: String = ""
     @State private var deviceIOSMajor: Int = 0
     @State private var tunneldHintDismissed: Bool = false
+    @State private var tunneldRunning: Bool = false
+
+    // iOS 17+ 未启 tunneld → 拒绝传送（否则 pymobiledevice3 会假成功）
+    private var needsTunneld: Bool { deviceIOSMajor >= 17 && !tunneldRunning }
 
     // 用户可见的单条状态
     @State private var status: AppStatus = .idle
@@ -141,8 +145,8 @@ struct ContentView: View {
                 .padding(.horizontal, 15)
                 .padding(.top, 12)
 
-                // 1b. iOS 17+ tunneld 提示横幅
-                if isDeviceConnected && deviceIOSMajor >= 17 && !tunneldHintDismissed {
+                // 1b. iOS 17+ tunneld 提示横幅（tunneld 跑起来后自动收起）
+                if isDeviceConnected && deviceIOSMajor >= 17 && !tunneldRunning && !tunneldHintDismissed {
                     tunneldBanner
                         .padding(.horizontal, 15)
                 }
@@ -229,7 +233,7 @@ struct ContentView: View {
                             .shadow(color: Color.blue.opacity((isDeviceConnected && isEnvironmentReady && coordsValid) ? 0.35 : 0), radius: 12, x: 0, y: 4)
 
                         HStack(spacing: 6) {
-                            if !isDeviceConnected || !isEnvironmentReady || !coordsValid {
+                            if !isDeviceConnected || !isEnvironmentReady || !coordsValid || needsTunneld {
                                 Image(systemName: "exclamationmark.triangle.fill").foregroundColor(.yellow)
                             }
                             Text(buttonTitle())
@@ -241,7 +245,7 @@ struct ContentView: View {
                 }
                 .buttonStyle(.plain)
                 .padding(.horizontal, 15)
-                .disabled(isWorking || !isDeviceConnected || !isEnvironmentReady || !coordsValid)
+                .disabled(isWorking || !isDeviceConnected || !isEnvironmentReady || !coordsValid || needsTunneld)
 
                 // 7. 状态卡（用户只看这一条）
                 statusCard
@@ -259,11 +263,15 @@ struct ContentView: View {
             .padding(.bottom, 12)
         }
         .frame(minWidth: 450, minHeight: showDebugLog ? 750 : 620)
-        .onReceive(timer) { _ in checkUSBConnection() }
+        .onReceive(timer) { _ in
+            checkUSBConnection()
+            checkTunneld()
+        }
         .onAppear {
             logSystemInfo()
             findDependency()
             checkUSBConnection()
+            checkTunneld()
         }
     }
 
@@ -316,6 +324,14 @@ struct ContentView: View {
                     subtitle: "Plug in via USB and trust this Mac on the device.",
                     icon: "iphone.gen3.slash",
                     tint: alertRed,
+                    showSpinner: false)
+            }
+            if needsTunneld {
+                return StatusDisplay(
+                    title: "iOS \(deviceIOSVersion) needs the tunnel first",
+                    subtitle: "In Terminal: sudo python3 -m pymobiledevice3 remote tunneld — keep it running.",
+                    icon: "lock.shield.fill",
+                    tint: Color(red: 1.0, green: 0.80, blue: 0.30),
                     showSpinner: false)
             }
             if !coordsValid {
@@ -529,6 +545,19 @@ struct ContentView: View {
                     }
                     .buttonStyle(.plain)
                     .help("Copy command")
+                    Button {
+                        launchTunneldInTerminal(cmd: cmd)
+                    } label: {
+                        HStack(spacing: 3) {
+                            Image(systemName: "terminal.fill").font(.system(size: 10))
+                            Text("Launch").font(.system(size: 9, weight: .semibold, design: .monospaced))
+                        }
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 7).padding(.vertical, 3)
+                        .background(Capsule().fill(accentBlue.opacity(0.85)))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Open Terminal and run the command")
                 }
                 .padding(.horizontal, 8).padding(.vertical, 5)
                 .background(
@@ -560,6 +589,32 @@ struct ContentView: View {
                         .strokeBorder(Color.yellow.opacity(0.45), lineWidth: 1)
                 )
         )
+    }
+
+    // 一键打开 Terminal 并运行 tunneld 命令（只差用户输 sudo 密码）
+    private func launchTunneldInTerminal(cmd: String) {
+        // AppleScript 字符串中 \" 要二次转义
+        let escaped = cmd.replacingOccurrences(of: "\"", with: "\\\"")
+        let source = """
+        tell application "Terminal"
+            activate
+            do script "\(escaped)"
+        end tell
+        """
+        var err: NSDictionary?
+        if let script = NSAppleScript(source: source) {
+            script.executeAndReturnError(&err)
+        }
+        if let err = err {
+            log("[TERMINAL] ❌ Failed to launch: \(err[NSAppleScript.errorMessage] ?? "")")
+            setStatus(.failure("Couldn't open Terminal", "Run the command manually — it's copied to your clipboard."))
+            let pb = NSPasteboard.general
+            pb.clearContents()
+            pb.setString(cmd, forType: .string)
+        } else {
+            log("[TERMINAL] ✅ Launched Terminal with tunneld command")
+            setStatus(.working("Waiting for tunneld…", "Enter your Mac password in the Terminal window that just opened."))
+        }
     }
 
     // 查询 iOS 版本；仅在 CLI 已就位且设备连接时有意义
@@ -594,6 +649,7 @@ struct ContentView: View {
         if isWorking { return "EXECUTING..." }
         if !isEnvironmentReady { return "ERROR: TOOL NOT FOUND" }
         if !isDeviceConnected { return "WAITING FOR USB..." }
+        if needsTunneld { return "START TUNNELD FIRST" }
         if !coordsValid { return "INVALID COORDS" }
         return ">>> CONFIRM & JUMP <<<"
     }
@@ -656,6 +712,10 @@ struct ContentView: View {
                         self.detectedCliPath = path
                         self.isEnvironmentReady = true
                         self.isScanningDeps = false
+                        // 若设备此时已插着但我们还没拿到 iOS 版本，补一次
+                        if self.isDeviceConnected && self.deviceIOSVersion.isEmpty {
+                            self.fetchDeviceIOSVersion()
+                        }
                     }
                     self.log("[SCAN] ✅ FOUND executable.")
                     self.setStatus(.idle)
@@ -692,6 +752,35 @@ struct ContentView: View {
             return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
         } catch {
             return nil
+        }
+    }
+
+    // 探测 tunneld 是否在跑（pgrep 匹配完整命令行）
+    func checkTunneld() {
+        DispatchQueue.global(qos: .background).async {
+            let task = Process()
+            let pipe = Pipe()
+            task.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
+            task.arguments = ["-f", "pymobiledevice3.*remote.*tunneld"]
+            task.standardOutput = pipe
+            task.standardError = Pipe()
+            var running = false
+            do {
+                try task.run()
+                task.waitUntilExit()
+                running = task.terminationStatus == 0
+            } catch { running = false }
+            DispatchQueue.main.async {
+                if running != self.tunneldRunning {
+                    self.log(running ? "[TUNNELD] ✅ Detected running" : "[TUNNELD] ⚠️ Not running")
+                    // tunneld 刚起来 → 如果卡在 "Waiting for tunneld…"，回到 idle
+                    if running, case .working(let title, _) = self.status,
+                       title.lowercased().contains("tunneld") {
+                        self.setStatus(.idle)
+                    }
+                }
+                self.tunneldRunning = running
+            }
         }
     }
 
@@ -769,6 +858,15 @@ struct ContentView: View {
             findDependency()
             return
         }
+        if needsTunneld {
+            log("[USER] ❌ iOS \(deviceIOSVersion) requires tunneld — aborting")
+            setStatus(.failure(
+                "iOS \(deviceIOSVersion) tunnel isn't running",
+                "pymobiledevice3 would silently no-op. Click Launch in the yellow banner, or run: sudo python3 -m pymobiledevice3 remote tunneld"
+            ))
+            tunneldHintDismissed = false
+            return
+        }
         guard coordsValid else {
             log("[USER] ❌ Coordinate validation failed — aborting")
             setStatus(.failure("Invalid coordinates", "Fix LAT / LON before teleporting."))
@@ -840,9 +938,22 @@ struct ContentView: View {
 
                 self.log("[SYS] Process Exited. Code: \(task.terminationStatus)")
 
-                if task.terminationStatus == 0 {
+                // 假成功检测：pymobiledevice3 在 iOS 17+ 无 tunneld 时可能 exit 0
+                // 但 stderr 里会留下 rsd / tunneld / traceback 之类的痕迹
+                let stderrLower = errorOutput.lowercased()
+                let stdoutLower = output.lowercased()
+                let suspicious = ["rsd", "tunneld", "traceback", "exception", "no device",
+                                  "not paired", "permission denied", "connectionrefused",
+                                  "connectionabort", "remoteserviced", "quic"]
+                let looksBad = suspicious.contains { stderrLower.contains($0) || stdoutLower.contains($0) }
+
+                if task.terminationStatus == 0 && !looksBad {
                     self.log("[RESULT] ✅ SUCCESS: Signal Injected.")
                     self.setStatus(.success("GPS moved", "\(self.latitude), \(self.longitude)"))
+                } else if task.terminationStatus == 0 && looksBad {
+                    self.log("[RESULT] ⚠️ Exit 0 but stderr looks bad — treating as failure.")
+                    let reason = self.humanize(stderr: errorOutput, stdout: output, exit: 0)
+                    self.setStatus(.failure("Teleport may not have worked", reason))
                 } else {
                     self.log("[RESULT] ❌ FAILURE: Non-zero exit code.")
                     let reason = self.humanize(stderr: errorOutput, stdout: output, exit: task.terminationStatus)
