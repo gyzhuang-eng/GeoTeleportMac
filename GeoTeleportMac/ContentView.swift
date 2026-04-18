@@ -190,30 +190,6 @@ struct ContentView: View {
                             .offset(y: -18)
                     }
                     .allowsHitTesting(false)
-
-                    // 左下角当前坐标 HUD —— 用户拖图时实时反馈
-                    VStack {
-                        Spacer()
-                        HStack {
-                            HStack(spacing: 6) {
-                                Image(systemName: "location.fill")
-                                    .font(.system(size: 10, weight: .semibold))
-                                    .foregroundColor(accentBlue)
-                                Text("\(latitude), \(longitude)")
-                                    .font(.system(size: 10, weight: .medium, design: .monospaced))
-                                    .foregroundColor(.primary)
-                            }
-                            .padding(.horizontal, 10).padding(.vertical, 6)
-                            .background(
-                                Capsule()
-                                    .fill(.regularMaterial)
-                                    .overlay(Capsule().strokeBorder(Color.white.opacity(0.14), lineWidth: 1))
-                            )
-                            Spacer()
-                        }
-                        .padding(10)
-                    }
-                    .allowsHitTesting(false)
                 }
                 .frame(minHeight: showDebugLog ? 240 : 320, maxHeight: .infinity)
                 .layoutPriority(1)
