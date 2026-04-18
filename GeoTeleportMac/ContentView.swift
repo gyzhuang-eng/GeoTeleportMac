@@ -497,6 +497,16 @@ struct ContentView: View {
     // 把 stderr/stdout 压成一句人话；识别最常见的几类错误
     private func humanize(stderr: String, stdout: String, exit: Int32) -> String {
         let combined = (stderr + "\n" + stdout).lowercased()
+        if combined.contains("casefold") || combined.contains("tunnelprotocol")
+            || (combined.contains("attributeerror") && combined.contains("click")) {
+            return "pymobiledevice3 install is broken (Click/Typer version mismatch). Reinstall via: pipx install pymobiledevice3"
+        }
+        if combined.contains("no module named") && combined.contains("pymobiledevice3") {
+            return "Python can't find pymobiledevice3. Reinstall cleanly: pipx install pymobiledevice3"
+        }
+        if combined.contains("traceback") && combined.contains("pymobiledevice3") {
+            return "pymobiledevice3 crashed with a Python traceback — likely broken install. Try: pipx install pymobiledevice3"
+        }
         if combined.contains("tunneld") || combined.contains("rsd") || combined.contains("no developer mode") {
             return "iOS 17+ tunnel isn't running. Start it in Terminal first."
         }
@@ -623,6 +633,20 @@ struct ContentView: View {
         } else {
             log("[TERMINAL] ✅ Launched Terminal with tunneld command")
             setStatus(.working("Waiting for tunneld…", "Enter your Mac password in the Terminal window that just opened."))
+
+            // 12 秒看门狗：如果这期间 tunneld 始终没起来，很可能是 pymobiledevice3
+            // 自己在 Terminal 里崩了（典型：Click/Typer 不兼容抛 AttributeError）
+            DispatchQueue.main.asyncAfter(deadline: .now() + 12) {
+                if !self.tunneldRunning,
+                   case .working(let title, _) = self.status,
+                   title.lowercased().contains("tunneld") {
+                    self.log("[TERMINAL] ⚠️ 12s elapsed, tunneld still down — likely install issue")
+                    self.setStatus(.failure(
+                        "Tunneld didn't start",
+                        "Check the Terminal window. If you see AttributeError / Traceback, pymobiledevice3 is broken — fix with: pipx install pymobiledevice3"
+                    ))
+                }
+            }
         }
     }
 
