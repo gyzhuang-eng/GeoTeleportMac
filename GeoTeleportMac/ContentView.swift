@@ -14,48 +14,63 @@ enum AppStatus: Equatable {
 }
 
 struct ContentView: View {
-    // 坐标（持久化）
-    @AppStorage("latitude") private var latitude: String = "25.185317"
-    @AppStorage("longitude") private var longitude: String = "55.281516"
-    @AppStorage("citySearchText") private var citySearchText: String = ""
+    @StateObject private var appModel = V3AppModel()
+    @StateObject private var diagnostics = V3DiagnosticsStore()
+    @StateObject private var statusStore = V3StatusStore()
+    @AppStorage("v3.backendTrack") private var backendTrackRaw: String = BackendTrack.legacyPreview.rawValue
+    private let backendProvider = V3BackendProvider()
+    private let tunnelLauncher = V3TunnelLauncher()
+    private var legacyBackend: LegacyCLIBackend { backendProvider.legacyPreviewBackend() }
+    private var activeBackend: DeviceBackend { backendProvider.backend(for: activeBackendTrack) }
+    private var runtimeCoordinator: V3RuntimeCoordinator {
+        V3RuntimeCoordinator(backend: activeBackend)
+    }
+    private var legacyTeleportService: V3LegacyTeleportService {
+        V3LegacyTeleportService(backend: activeBackend)
+    }
 
-    // 运行时状态
-    @State private var consoleLogs: [String] = [
-        ">>> KERNEL BOOT SEQUENCE STARTED...",
-        ">>> INITIALIZING LOGGING SUBSYSTEM..."
-    ]
-    private let maxLogLines = 500
+    // 坐标（持久化）
+    @AppStorage("v3.latitude") private var latitude: String = "25.185317"
+    @AppStorage("v3.longitude") private var longitude: String = "55.281516"
+    @AppStorage("v3.citySearchText") private var citySearchText: String = ""
 
     @State private var isWorking: Bool = false
-    @State private var isDeviceConnected: Bool = false
-    @State private var connectionStatusText: String = "INITIALIZING..."
-
-    @State private var detectedCliPath: String = ""
-    @State private var isEnvironmentReady: Bool = false
     @State private var isScanningDeps: Bool = false
 
-    // iOS 版本（用于 iOS 17+ tunneld 提示）
-    @State private var deviceIOSVersion: String = ""
-    @State private var deviceIOSMajor: Int = 0
     @State private var tunneldHintDismissed: Bool = false
-    @State private var tunneldRunning: Bool = false
 
-    // iOS 17+ 未启 tunneld → 拒绝传送（否则 pymobiledevice3 会假成功）
-    private var needsTunneld: Bool { deviceIOSMajor >= 17 && !tunneldRunning }
+    private var activeBackendTrack: BackendTrack {
+        BackendTrack(rawValue: backendTrackRaw) ?? .legacyPreview
+    }
+
+    private var isDeviceConnected: Bool { appModel.isDeviceConnected }
+    private var hardwareStatusTitle: String { appModel.hardwareStatusTitle }
+    private var connectionStatusText: String { appModel.connectionStatusText }
+    private var detectedCliPath: String { appModel.resolvedCLIPath }
+    private var isEnvironmentReady: Bool { appModel.isEnvironmentReady }
+    private var deviceIOSVersion: String { appModel.deviceIOSVersion }
+    private var deviceIOSMajor: Int { appModel.deviceIOSMajor }
+    private var tunneldRunning: Bool { appModel.tunneldRunning }
+    private var needsTunneld: Bool { appModel.needsTunnel }
+    private var showsLegacyTunnelBanner: Bool {
+        activeBackendTrack == .legacyPreview &&
+        isDeviceConnected &&
+        deviceIOSMajor >= 17 &&
+        !tunneldRunning &&
+        !tunneldHintDismissed
+    }
 
     // 组装 tunneld 命令：优先用已检测到的可执行文件绝对路径，避免多 Python
     // 解释器环境下 `python3 -m pymobiledevice3` 找不到模块的问题
     private var tunneldCommand: String {
         if !detectedCliPath.isEmpty {
-            return "sudo \(detectedCliPath) remote tunneld"
+            let cliPath = detectedCliPath
+            return "sudo \(cliPath) remote tunneld"
         }
         return "sudo python3 -m pymobiledevice3 remote tunneld"
     }
 
-    // 用户可见的单条状态
-    @State private var status: AppStatus = .idle
     @State private var showDebugLog: Bool = false
-    @State private var successToken: Int = 0
 
     @State private var region = MKCoordinateRegion(
         center: CLLocationCoordinate2D(latitude: 25.185317, longitude: 55.281516),
@@ -118,7 +133,7 @@ struct ContentView: View {
                             .foregroundColor(isDeviceConnected ? terminalGreen : alertRed)
 
                         VStack(alignment: .leading, spacing: 1) {
-                            Text(isDeviceConnected ? "HARDWARE CONNECTED" : "NO USB CONNECTION")
+                            Text(hardwareStatusTitle)
                                 .font(.system(size: 10, weight: .bold, design: .monospaced))
                                 .foregroundColor(isDeviceConnected ? terminalGreen : alertRed)
                             Text(connectionStatusText)
@@ -134,19 +149,37 @@ struct ContentView: View {
                     // 环境状态胶囊 + Rescan 按钮
                     HStack(spacing: 6) {
                         Circle()
-                            .fill(isEnvironmentReady ? terminalGreen : alertRed)
+                            .fill(
+                                V3ViewPresentation.environmentTint(
+                                    appModel: appModel,
+                                    terminalGreen: terminalGreen,
+                                    alertRed: alertRed
+                                )
+                            )
                             .frame(width: 7, height: 7)
-                        Text(isEnvironmentReady ? "ENV: READY" : "ENV: MISSING")
+                        Text(V3ViewPresentation.environmentBadgeText(appModel: appModel))
                             .font(.system(size: 9, weight: .semibold, design: .monospaced))
                             .foregroundColor(.secondary)
-                        Button(action: findDependency) {
+                        Menu {
+                            ForEach(BackendTrack.allCases, id: \.rawValue) { track in
+                                Button(track.displayName) {
+                                    switchBackend(to: track)
+                                }
+                            }
+                        } label: {
+                            Text(activeBackendTrack.shortLabel)
+                                .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                                .foregroundColor(.secondary)
+                        }
+                        .menuStyle(.borderlessButton)
+                        Button(action: manualRefresh) {
                             Image(systemName: isScanningDeps ? "hourglass" : "arrow.clockwise")
                                 .font(.system(size: 10, weight: .semibold))
                                 .foregroundColor(.secondary)
                         }
                         .buttonStyle(.plain)
                         .disabled(isScanningDeps)
-                        .help("Rescan for pymobiledevice3")
+                        .help(V3ViewPresentation.refreshActionLabel(appModel: appModel))
                     }
                     .padding(.horizontal, 10).padding(.vertical, 7)
                     .background(glassCapsule(tint: .white.opacity(0.25)))
@@ -155,7 +188,7 @@ struct ContentView: View {
                 .padding(.top, 12)
 
                 // 1b. iOS 17+ tunneld 提示横幅（tunneld 跑起来后自动收起）
-                if isDeviceConnected && deviceIOSMajor >= 17 && !tunneldRunning && !tunneldHintDismissed {
+                if showsLegacyTunnelBanner {
                     tunneldBanner
                         .padding(.horizontal, 15)
                 }
@@ -242,7 +275,11 @@ struct ContentView: View {
                         RoundedRectangle(cornerRadius: 12, style: .continuous)
                             .fill(
                                 LinearGradient(
-                                    colors: (isDeviceConnected && isEnvironmentReady && coordsValid)
+                                    colors: V3ViewPresentation.canTeleport(
+                                        isWorking: isWorking,
+                                        appModel: appModel,
+                                        coordsValid: coordsValid
+                                    )
                                         ? [Color.blue.opacity(0.95), Color.purple.opacity(0.95)]
                                         : [Color.gray.opacity(0.55), Color.gray.opacity(0.35)],
                                     startPoint: .leading, endPoint: .trailing
@@ -252,10 +289,24 @@ struct ContentView: View {
                                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                                     .strokeBorder(Color.white.opacity(0.18), lineWidth: 1)
                             )
-                            .shadow(color: Color.blue.opacity((isDeviceConnected && isEnvironmentReady && coordsValid) ? 0.35 : 0), radius: 12, x: 0, y: 4)
+                            .shadow(
+                                color: Color.blue.opacity(
+                                    V3ViewPresentation.canTeleport(
+                                        isWorking: isWorking,
+                                        appModel: appModel,
+                                        coordsValid: coordsValid
+                                    ) ? 0.35 : 0
+                                ),
+                                radius: 12,
+                                x: 0,
+                                y: 4
+                            )
 
                         HStack(spacing: 6) {
-                            if !isDeviceConnected || !isEnvironmentReady || !coordsValid || needsTunneld {
+                            if V3ViewPresentation.shouldShowButtonWarning(
+                                appModel: appModel,
+                                coordsValid: coordsValid
+                            ) {
                                 Image(systemName: "exclamationmark.triangle.fill").foregroundColor(.yellow)
                             }
                             Text(buttonTitle())
@@ -267,7 +318,13 @@ struct ContentView: View {
                 }
                 .buttonStyle(.plain)
                 .padding(.horizontal, 15)
-                .disabled(isWorking || !isDeviceConnected || !isEnvironmentReady || !coordsValid || needsTunneld)
+                .disabled(
+                    !V3ViewPresentation.canTeleport(
+                        isWorking: isWorking,
+                        appModel: appModel,
+                        coordsValid: coordsValid
+                    )
+                )
 
                 // 7. 状态卡（用户只看这一条）
                 statusCard
@@ -285,14 +342,12 @@ struct ContentView: View {
         }
         .frame(minWidth: 540, minHeight: 720)
         .onReceive(timer) { _ in
-            checkUSBConnection()
-            checkTunneld()
+            performScheduledRefresh()
         }
         .onAppear {
+            appModel.backendTrack = activeBackendTrack
             logSystemInfo()
-            findDependency()
-            checkUSBConnection()
-            checkTunneld()
+            performInitialRefresh()
         }
     }
 
@@ -320,66 +375,15 @@ struct ContentView: View {
 
     // MARK: - Status card
 
-    private struct StatusDisplay {
-        let title: String
-        let subtitle: String?
-        let icon: String
-        let tint: Color
-        let showSpinner: Bool
-    }
-
-    private var statusDisplay: StatusDisplay {
-        switch status {
-        case .idle:
-            if !isEnvironmentReady {
-                return StatusDisplay(
-                    title: "pymobiledevice3 is not installed",
-                    subtitle: "Run `pip3 install pymobiledevice3` in Terminal, then press Rescan.",
-                    icon: "wrench.adjustable",
-                    tint: alertRed,
-                    showSpinner: false)
-            }
-            if !isDeviceConnected {
-                return StatusDisplay(
-                    title: "Connect your iPhone",
-                    subtitle: "Plug in via USB and trust this Mac on the device.",
-                    icon: "iphone.gen3.slash",
-                    tint: alertRed,
-                    showSpinner: false)
-            }
-            if needsTunneld {
-                return StatusDisplay(
-                    title: "iOS \(deviceIOSVersion) needs the tunnel first",
-                    subtitle: "Click Launch in the yellow banner — or run the command shown there in Terminal.",
-                    icon: "lock.shield.fill",
-                    tint: Color(red: 1.0, green: 0.80, blue: 0.30),
-                    showSpinner: false)
-            }
-            if !coordsValid {
-                return StatusDisplay(
-                    title: "Invalid coordinates",
-                    subtitle: "Latitude must be −90…90, longitude must be −180…180.",
-                    icon: "exclamationmark.triangle.fill",
-                    tint: Color(red: 1.0, green: 0.80, blue: 0.30),
-                    showSpinner: false)
-            }
-            return StatusDisplay(
-                title: "Ready to teleport",
-                subtitle: "Drag the pin, search a city, or tap a preset.",
-                icon: "checkmark.seal.fill",
-                tint: terminalGreen,
-                showSpinner: false)
-        case .working(let t, let s):
-            return StatusDisplay(title: t, subtitle: s, icon: "bolt.circle.fill", tint: accentBlue, showSpinner: true)
-        case .success(let t, let s):
-            return StatusDisplay(title: t, subtitle: s, icon: "checkmark.circle.fill", tint: terminalGreen, showSpinner: false)
-        case .failure(let t, let s):
-            return StatusDisplay(title: t, subtitle: s, icon: "xmark.octagon.fill", tint: alertRed, showSpinner: false)
-        }
-    }
-
     private var statusCard: some View {
-        let d = statusDisplay
+        let d = V3ViewPresentation.statusDisplay(
+            status: statusStore.status,
+            appModel: appModel,
+            coordsValid: coordsValid,
+            accentBlue: accentBlue,
+            terminalGreen: terminalGreen,
+            alertRed: alertRed
+        )
         return HStack(alignment: .center, spacing: 12) {
             ZStack {
                 Circle()
@@ -454,10 +458,10 @@ struct ContentView: View {
                 Text("DEBUG LOG")
                     .font(.system(size: 9, weight: .semibold, design: .monospaced)).foregroundColor(.secondary)
                 Spacer()
-                Text("\(consoleLogs.count)/\(maxLogLines)")
+                Text("\(diagnostics.lines.count)/\(diagnostics.maxLines)")
                     .font(.system(size: 9, design: .monospaced))
                     .foregroundColor(.secondary.opacity(0.6))
-                Button(action: { consoleLogs = [">>> LOG CLEARED."] }) {
+                Button(action: { diagnostics.clear() }) {
                     Image(systemName: "trash").font(.system(size: 10)).foregroundColor(.secondary)
                 }.buttonStyle(.plain)
             }
@@ -465,7 +469,7 @@ struct ContentView: View {
 
             ScrollViewReader { proxy in
                 ScrollView {
-                    Text(consoleLogs.joined(separator: "\n"))
+                    Text(diagnostics.lines.joined(separator: "\n"))
                         .font(.system(size: 10, design: .monospaced))
                         .foregroundColor(terminalGreen)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -473,7 +477,7 @@ struct ContentView: View {
                         .textSelection(.enabled)
                         .id("logBottom")
                 }
-                .onChange(of: consoleLogs.count) { _, _ in
+                .onChange(of: diagnostics.lines.count) { _, _ in
                     withAnimation { proxy.scrollTo("logBottom", anchor: .bottom) }
                 }
             }
@@ -492,53 +496,8 @@ struct ContentView: View {
     // 设置用户可见状态；.success 会在 5s 后自动淡回 .idle（可被新状态打断）
     private func setStatus(_ s: AppStatus) {
         DispatchQueue.main.async {
-            withAnimation(.easeInOut(duration: 0.18)) { self.status = s }
-            if case .success = s {
-                self.successToken &+= 1
-                let token = self.successToken
-                DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
-                    if self.successToken == token, case .success = self.status {
-                        withAnimation(.easeInOut(duration: 0.25)) { self.status = .idle }
-                    }
-                }
-            }
+            withAnimation(.easeInOut(duration: 0.18)) { self.statusStore.set(s) }
         }
-    }
-
-    // 把 stderr/stdout 压成一句人话；识别最常见的几类错误
-    private func humanize(stderr: String, stdout: String, exit: Int32) -> String {
-        let combined = (stderr + "\n" + stdout).lowercased()
-        if combined.contains("casefold") || combined.contains("tunnelprotocol")
-            || (combined.contains("attributeerror") && combined.contains("click")) {
-            return "pymobiledevice3 install is broken (Click/Typer version mismatch). Reinstall via: pipx install pymobiledevice3"
-        }
-        if combined.contains("no module named") && combined.contains("pymobiledevice3") {
-            return "Python can't find pymobiledevice3. Reinstall cleanly: pipx install pymobiledevice3"
-        }
-        if combined.contains("traceback") && combined.contains("pymobiledevice3") {
-            return "pymobiledevice3 crashed with a Python traceback — likely broken install. Try: pipx install pymobiledevice3"
-        }
-        if combined.contains("tunneld") || combined.contains("rsd") || combined.contains("no developer mode") {
-            return "iOS 17+ tunnel isn't running. Start it in Terminal first."
-        }
-        if combined.contains("not paired") || combined.contains("pairing") {
-            return "Device isn't paired — trust this Mac on the iPhone."
-        }
-        if combined.contains("permission") || combined.contains("denied") {
-            return "Permission denied — check Developer Mode and pairing."
-        }
-        if combined.contains("no device") || combined.contains("not connected") {
-            return "Device disappeared during injection."
-        }
-        let first = stderr
-            .split(separator: "\n", omittingEmptySubsequences: true)
-            .first
-            .map(String.init)?
-            .trimmingCharacters(in: .whitespaces) ?? ""
-        if !first.isEmpty {
-            return first.count > 120 ? String(first.prefix(117)) + "…" : first
-        }
-        return "Exit code \(exit)."
     }
 
     // iOS 17+ tunneld 提示横幅
@@ -550,10 +509,10 @@ struct ContentView: View {
                 .foregroundColor(.yellow)
                 .padding(.top, 2)
             VStack(alignment: .leading, spacing: 4) {
-                Text("iOS \(deviceIOSVersion) detected — tunneld required")
-                    .font(.system(size: 11, weight: .bold, design: .monospaced))
-                    .foregroundColor(.primary)
-                Text("In Terminal, run this once and keep it open:")
+                    Text("iOS \(deviceIOSVersion) detected — tunneld required")
+                        .font(.system(size: 11, weight: .bold, design: .monospaced))
+                        .foregroundColor(.primary)
+                Text("This preview still uses the legacy tunnel flow. Start it once and keep the Terminal window open:")
                     .font(.system(size: 10))
                     .foregroundColor(.secondary)
                 HStack(spacing: 6) {
@@ -564,9 +523,7 @@ struct ContentView: View {
                         .lineLimit(1)
                         .truncationMode(.tail)
                     Button {
-                        let pb = NSPasteboard.general
-                        pb.clearContents()
-                        pb.setString(cmd, forType: .string)
+                        tunnelLauncher.copyToPasteboard(cmd)
                         log("[HINT] Copied tunneld command to clipboard")
                     } label: {
                         Image(systemName: "doc.on.doc")
@@ -623,25 +580,12 @@ struct ContentView: View {
 
     // 一键打开 Terminal 并运行 tunneld 命令（只差用户输 sudo 密码）
     private func launchTunneldInTerminal(cmd: String) {
-        // AppleScript 字符串中 \" 要二次转义
-        let escaped = cmd.replacingOccurrences(of: "\"", with: "\\\"")
-        let source = """
-        tell application "Terminal"
-            activate
-            do script "\(escaped)"
-        end tell
-        """
-        var err: NSDictionary?
-        if let script = NSAppleScript(source: source) {
-            script.executeAndReturnError(&err)
-        }
-        if let err = err {
-            log("[TERMINAL] ❌ Failed to launch: \(err[NSAppleScript.errorMessage] ?? "")")
+        switch tunnelLauncher.launchInTerminal(command: cmd) {
+        case .failed(let message):
+            log("[TERMINAL] ❌ Failed to launch: \(message)")
             setStatus(.failure("Couldn't open Terminal", "Run the command manually — it's copied to your clipboard."))
-            let pb = NSPasteboard.general
-            pb.clearContents()
-            pb.setString(cmd, forType: .string)
-        } else {
+            tunnelLauncher.copyToPasteboard(cmd)
+        case .launched:
             log("[TERMINAL] ✅ Launched Terminal with tunneld command")
             setStatus(.working("Waiting for tunneld…", "Enter your Mac password in the Terminal window that just opened."))
 
@@ -649,40 +593,14 @@ struct ContentView: View {
             // 自己在 Terminal 里崩了（典型：Click/Typer 不兼容抛 AttributeError）
             DispatchQueue.main.asyncAfter(deadline: .now() + 12) {
                 if !self.tunneldRunning,
-                   case .working(let title, _) = self.status,
+                   case .working(let title, _) = self.statusStore.status,
                    title.lowercased().contains("tunneld") {
                     self.log("[TERMINAL] ⚠️ 12s elapsed, tunneld still down — likely install issue")
                     self.setStatus(.failure(
                         "Tunneld didn't start",
-                        "Check the Terminal window. If you see AttributeError / Traceback, pymobiledevice3 is broken — fix with: pipx install pymobiledevice3"
+                        "Check the Terminal window. If the legacy backend crashed, the tunnel session never came up."
                     ))
                 }
-            }
-        }
-    }
-
-    // 查询 iOS 版本；仅在 CLI 已就位且设备连接时有意义
-    private func fetchDeviceIOSVersion() {
-        guard !detectedCliPath.isEmpty else { return }
-        DispatchQueue.global(qos: .background).async {
-            guard let out = self.runCaptured(self.detectedCliPath, args: ["lockdown", "info"]) else { return }
-            // ProductVersion: "17.2.1" 或 ProductVersion = "26.0" 或 "ProductVersion": "26.0"
-            let pattern = #"ProductVersion["\s:=]+["']?([0-9]+(?:\.[0-9]+)*)"#
-            guard let re = try? NSRegularExpression(pattern: pattern),
-                  let m = re.firstMatch(in: out, range: NSRange(out.startIndex..., in: out)),
-                  m.numberOfRanges >= 2,
-                  let r = Range(m.range(at: 1), in: out) else { return }
-            let version = String(out[r])
-            let major = Int(version.split(separator: ".").first ?? "0") ?? 0
-            DispatchQueue.main.async {
-                if self.deviceIOSVersion != version {
-                    self.log("[DEVICE] iOS \(version) detected")
-                    if major >= 17 {
-                        self.log("[DEVICE] ⚠️ iOS 17+ requires tunneld — see banner")
-                    }
-                }
-                self.deviceIOSVersion = version
-                self.deviceIOSMajor = major
             }
         }
     }
@@ -690,24 +608,16 @@ struct ContentView: View {
     // MARK: - 逻辑
 
     func buttonTitle() -> String {
-        if isWorking { return "EXECUTING..." }
-        if !isEnvironmentReady { return "ERROR: TOOL NOT FOUND" }
-        if !isDeviceConnected { return "WAITING FOR USB..." }
-        if needsTunneld { return "START TUNNELD FIRST" }
-        if !coordsValid { return "INVALID COORDS" }
-        return ">>> CONFIRM & JUMP <<<"
+        V3ViewPresentation.buttonTitle(
+            isWorking: isWorking,
+            appModel: appModel,
+            coordsValid: coordsValid
+        )
     }
 
     func log(_ msg: String) {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm:ss.SSS"
-        let timestamp = formatter.string(from: Date())
-        let line = "[\(timestamp)] \(msg)"
         DispatchQueue.main.async {
-            self.consoleLogs.append(line)
-            if self.consoleLogs.count > self.maxLogLines {
-                self.consoleLogs.removeFirst(self.consoleLogs.count - self.maxLogLines)
-            }
+            self.diagnostics.append(msg)
         }
     }
 
@@ -719,148 +629,317 @@ struct ContentView: View {
         log("[SYS] OS: \(os)")
     }
 
-    // 依赖扫描：先查硬编码候选路径，再用 `which -a` 兜底
+    private func currentSessionState() -> DeviceSessionState {
+        V3AppModel.deriveSessionState(
+            availability: appModel.backendAvailability,
+            capabilities: appModel.backendCapabilities,
+            snapshot: appModel.deviceSnapshot,
+            tunnelState: appModel.tunnelState,
+            backendTrack: appModel.backendTrack,
+            deviceAssessment: appModel.deviceAssessment,
+            tunnelAssessment: appModel.tunnelAssessment
+        )
+    }
+
+    private func currentConnectionHealth() -> ConnectionHealth {
+        V3AppModel.deriveConnectionHealth(
+            for: currentSessionState(),
+            backendTrack: appModel.backendTrack,
+            availabilityAssessment: appModel.availabilityAssessment,
+            deviceAssessment: appModel.deviceAssessment,
+            tunnelAssessment: appModel.tunnelAssessment
+        )
+    }
+
+    private func logSessionTransitionIfNeeded(
+        previousState: DeviceSessionState,
+        previousHealth: ConnectionHealth
+    ) {
+        let nextState = currentSessionState()
+        let nextHealth = currentConnectionHealth()
+        let previousBlocker = V3AppModel.deriveSessionBlocker(
+            for: previousState,
+            backendTrack: appModel.backendTrack,
+            availabilityAssessment: appModel.availabilityAssessment,
+            deviceAssessment: appModel.deviceAssessment,
+            tunnelAssessment: appModel.tunnelAssessment
+        )
+        let nextBlocker = V3AppModel.deriveSessionBlocker(
+            for: nextState,
+            backendTrack: appModel.backendTrack,
+            availabilityAssessment: appModel.availabilityAssessment,
+            deviceAssessment: appModel.deviceAssessment,
+            tunnelAssessment: appModel.tunnelAssessment
+        )
+
+        if nextState != previousState {
+            log("[SESSION] \(previousState.title) -> \(nextState.title)")
+            logSessionDiagnostics(state: nextState, health: nextHealth)
+        }
+
+        if nextHealth != previousHealth {
+            log("[HEALTH] \(previousHealth.label) -> \(nextHealth.label)")
+            if nextState == previousState {
+                logSessionDiagnostics(state: nextState, health: nextHealth)
+            }
+        }
+
+        if nextBlocker != previousBlocker {
+            log("[BLOCKER] \(previousBlocker.title) -> \(nextBlocker.title)")
+            if nextState == previousState, nextHealth == previousHealth {
+                logSessionDiagnostics(state: nextState, health: nextHealth)
+            }
+        }
+    }
+
+    private func logSessionDiagnostics(
+        state: DeviceSessionState? = nil,
+        health: ConnectionHealth? = nil
+    ) {
+        let resolvedState = state ?? currentSessionState()
+        let resolvedHealth = health ?? currentConnectionHealth()
+        let resolvedBlocker = V3AppModel.deriveSessionBlocker(
+            for: resolvedState,
+            backendTrack: appModel.backendTrack,
+            availabilityAssessment: appModel.availabilityAssessment,
+            deviceAssessment: appModel.deviceAssessment,
+            tunnelAssessment: appModel.tunnelAssessment
+        )
+        let readinessGate = V3AppModel.deriveReadinessGate(
+            availability: appModel.backendAvailability,
+            sessionState: resolvedState,
+            blocker: resolvedBlocker,
+            backendTrack: appModel.backendTrack,
+            capabilities: appModel.backendCapabilities,
+            availabilityAssessment: appModel.availabilityAssessment,
+            deviceAssessment: appModel.deviceAssessment,
+            tunnelAssessment: appModel.tunnelAssessment
+        )
+        let lines = V3SessionDiagnostics.diagnosticLines(
+            backendTrack: appModel.backendTrack,
+            availability: appModel.backendAvailability,
+            capabilities: appModel.backendCapabilities,
+            snapshot: appModel.deviceSnapshot,
+            tunnelState: appModel.tunnelState,
+            sessionState: resolvedState,
+            health: resolvedHealth,
+            blocker: resolvedBlocker,
+            readinessGate: readinessGate,
+            deviceProbeFocus: appModel.effectiveDeviceProbeFocus,
+            availabilityAssessment: appModel.availabilityAssessment,
+            deviceAssessment: appModel.deviceAssessment,
+            tunnelAssessment: appModel.tunnelAssessment
+        )
+        for line in lines {
+            log(line)
+        }
+    }
+
+    private func applyDeviceSnapshot(_ snapshot: DeviceSnapshot) {
+        let previousSessionState = currentSessionState()
+        let previousHealth = currentConnectionHealth()
+        let previousSnapshot = self.appModel.deviceSnapshot
+        let becameConnected = snapshot.isConnected && !previousSnapshot.isConnected
+        if snapshot.isConnected != previousSnapshot.isConnected {
+            self.log("[HARDWARE] I/O Registry Update:")
+            if snapshot.isConnected {
+                self.log("[HARDWARE] + DEVICE ATTACHED (\(snapshot.displayName))")
+                if let source = snapshot.probeSource, !source.isEmpty {
+                    self.log("[HARDWARE] Probe source: \(source)")
+                }
+            } else {
+                self.log("[HARDWARE] - DEVICE REMOVED")
+            }
+        }
+
+        self.appModel.deviceSnapshot = snapshot
+
+        let version = snapshot.iosVersion ?? ""
+        let major = snapshot.iosMajorVersion ?? 0
+
+        if version != (previousSnapshot.iosVersion ?? ""), !version.isEmpty {
+            self.log("[DEVICE] iOS \(version) detected")
+            if major >= 17 {
+                if activeBackendTrack == .legacyPreview {
+                    self.log("[DEVICE] ⚠️ iOS 17+ requires tunneld — see banner")
+                } else {
+                    self.log("[DEVICE] Tunnel requirement is now tracked through no-Python session state")
+                }
+            }
+        }
+
+        if !snapshot.isConnected {
+            self.tunneldHintDismissed = false
+        } else if becameConnected && self.isEnvironmentReady && version.isEmpty {
+            self.log("[DEVICE] Connected, waiting for version info...")
+        }
+
+        logSessionTransitionIfNeeded(
+            previousState: previousSessionState,
+            previousHealth: previousHealth
+        )
+    }
+
+    private func applyTunnelState(_ tunnelState: TunnelState) {
+        let previousSessionState = currentSessionState()
+        let previousHealth = currentConnectionHealth()
+        let previousTunnelState = self.appModel.tunnelState
+        let running = tunnelState == .active
+        if tunnelState != previousTunnelState {
+            switch tunnelState {
+            case .active:
+                self.log("[TUNNELD] ✅ Detected running")
+            case .starting:
+                self.log("[TUNNELD] ⏳ Product-owned tunnel is starting")
+            case .failed:
+                self.log("[TUNNELD] ❌ Product-owned tunnel failed")
+            case .requiredInactive, .notRequired:
+                self.log("[TUNNELD] ⚠️ Not running")
+            }
+            if running, case .working(let title, _) = self.statusStore.status,
+               title.lowercased().contains("tunneld") {
+                self.setStatus(.idle)
+            }
+        }
+        self.appModel.tunnelState = tunnelState
+        logSessionTransitionIfNeeded(
+            previousState: previousSessionState,
+            previousHealth: previousHealth
+        )
+    }
+
+    private func applyNoPythonAssessment(
+        deviceAssessment: DeviceAgentSessionAssessment?,
+        tunnelAssessment: DeviceAgentSessionAssessment?
+    ) {
+        appModel.deviceAssessment = deviceAssessment
+        appModel.tunnelAssessment = tunnelAssessment
+    }
+
+    private func performInitialRefresh() {
+        refreshForCurrentGate(trigger: "startup", isManual: false)
+    }
+
+    private func performScheduledRefresh() {
+        refreshForCurrentGate(trigger: "timer", isManual: false)
+    }
+
+    private func manualRefresh() {
+        refreshForCurrentGate(trigger: "manual", isManual: true)
+    }
+
+    private func refreshForCurrentGate(trigger: String, isManual: Bool) {
+        if isWorking { return }
+
+        if shouldProbeBackendBootstrap {
+            if !isScanningDeps {
+                if isManual {
+                    log("[REFRESH] \(trigger.uppercased()) -> probing backend bootstrap")
+                }
+                findDependency()
+            }
+            return
+        }
+
+        if isManual {
+            log("[REFRESH] \(trigger.uppercased()) -> \(appModel.manualRefreshLogSummary)")
+        }
+        refreshDeviceState(scope: appModel.effectiveRefreshScope, deviceFocus: appModel.effectiveDeviceProbeFocus)
+    }
+
+    private var shouldProbeBackendBootstrap: Bool {
+        if appModel.backendTrack == .noPythonStub {
+            return appModel.availabilityAssessment == nil ||
+                appModel.readinessGate == .backendBootstrap ||
+                appModel.backendAvailability.isUnavailable
+        }
+        return !appModel.isEnvironmentReady
+    }
+
+    private func refreshDeviceState(
+        scope: SessionRefreshScope = .full,
+        deviceFocus: DeviceProbeFocus = .attachment
+    ) {
+        if isWorking || isScanningDeps { return }
+        let existingSnapshot = appModel.deviceSnapshot
+        let existingDeviceAssessment = appModel.deviceAssessment
+        let existingTunnelState = appModel.tunnelState
+        let existingTunnelAssessment = appModel.tunnelAssessment
+        DispatchQueue.global(qos: .background).async {
+            let result = self.runtimeCoordinator.refreshDeviceState(
+                scope: scope,
+                deviceFocus: deviceFocus,
+                existingSnapshot: existingSnapshot,
+                existingDeviceAssessment: existingDeviceAssessment,
+                existingTunnelState: existingTunnelState,
+                existingTunnelAssessment: existingTunnelAssessment
+            )
+            DispatchQueue.main.async {
+                self.applyNoPythonAssessment(
+                    deviceAssessment: result.deviceAssessment,
+                    tunnelAssessment: result.tunnelAssessment
+                )
+                self.applyDeviceSnapshot(result.snapshot)
+                self.applyTunnelState(result.tunnelState)
+            }
+            for line in result.logLines {
+                self.log(line)
+            }
+        }
+    }
+
+    // 依赖扫描：通过 backend 适配层探测现有 CLI 可用性
     func findDependency() {
         if isScanningDeps { return }
         isScanningDeps = true
-        setStatus(.working("Looking for pymobiledevice3…", nil))
-        log("------------------------------------------")
-        log("[INIT] Starting Dependency Scan...")
+        setStatus(.working("Probing \(activeBackendTrack.displayName)…", nil))
 
-        DispatchQueue.global(qos: .userInitiated).async {
-            let fileManager = FileManager.default
-            let home = NSHomeDirectory()
-
-            var candidates = [
-                "/opt/homebrew/bin/pymobiledevice3",
-                "/usr/local/bin/pymobiledevice3",
-                "\(home)/Library/Python/3.9/bin/pymobiledevice3",
-                "\(home)/Library/Python/3.10/bin/pymobiledevice3",
-                "\(home)/Library/Python/3.11/bin/pymobiledevice3",
-                "\(home)/Library/Python/3.12/bin/pymobiledevice3",
-                "\(home)/Library/Python/3.13/bin/pymobiledevice3",
-                "/usr/bin/pymobiledevice3"
-            ]
-
-            // which -a 兜底
-            if let whichOutput = self.runCaptured("/usr/bin/which", args: ["-a", "pymobiledevice3"]) {
-                let extra = whichOutput.split(separator: "\n").map { String($0) }
-                for p in extra where !candidates.contains(p) { candidates.append(p) }
-                if !extra.isEmpty { self.log("[SCAN] which -a returned \(extra.count) path(s)") }
-            }
-
-            for path in candidates {
-                self.log("[SCAN] Checking: \(path)")
-                if fileManager.fileExists(atPath: path) {
-                    DispatchQueue.main.async {
-                        self.detectedCliPath = path
-                        self.isEnvironmentReady = true
-                        self.isScanningDeps = false
-                        // 若设备此时已插着但我们还没拿到 iOS 版本，补一次
-                        if self.isDeviceConnected && self.deviceIOSVersion.isEmpty {
-                            self.fetchDeviceIOSVersion()
-                        }
-                    }
-                    self.log("[SCAN] ✅ FOUND executable.")
-                    self.setStatus(.idle)
-                    return
-                } else {
-                    self.log("[SCAN] ❌ Not found")
-                }
-            }
+            DispatchQueue.global(qos: .userInitiated).async {
+            let result = self.runtimeCoordinator.refreshDependencies()
+            var nextRefreshScope: SessionRefreshScope?
+            var nextDeviceFocus: DeviceProbeFocus?
 
             DispatchQueue.main.async {
-                self.isEnvironmentReady = false
+                let previousSessionState = self.currentSessionState()
+                let previousHealth = self.currentConnectionHealth()
+                self.appModel.backendAvailability = result.availability
+                self.appModel.backendCapabilities = result.capabilities
+                self.appModel.resolvedCLIPath = result.resolvedCLIPath
+                self.appModel.availabilityAssessment = result.availabilityAssessment
                 self.isScanningDeps = false
+                nextRefreshScope = self.appModel.effectiveRefreshScope
+                nextDeviceFocus = self.appModel.effectiveDeviceProbeFocus
+                self.logSessionTransitionIfNeeded(
+                    previousState: previousSessionState,
+                    previousHealth: previousHealth
+                )
             }
-            self.log("------------------------------------------")
-            self.log("[INIT] CRITICAL FAILURE: 'pymobiledevice3' not found.")
-            self.log("[HELP] Install via Terminal: pip3 install pymobiledevice3")
-            self.log("------------------------------------------")
+
+            for line in result.logLines {
+                self.log(line)
+            }
+
+            if result.canRefreshDeviceState {
+                DispatchQueue.main.async {
+                    self.refreshDeviceState(
+                        scope: nextRefreshScope ?? self.appModel.effectiveRefreshScope,
+                        deviceFocus: nextDeviceFocus ?? self.appModel.effectiveDeviceProbeFocus
+                    )
+                }
+            }
             self.setStatus(.idle)
         }
     }
 
-    // 内部工具：同步运行进程并返回 stdout
-    private func runCaptured(_ executable: String, args: [String]) -> String? {
-        let task = Process()
-        let pipe = Pipe()
-        task.executableURL = URL(fileURLWithPath: executable)
-        task.arguments = args
-        task.standardOutput = pipe
-        task.standardError = Pipe()
-        do {
-            try task.run()
-            task.waitUntilExit()
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
-        } catch {
-            return nil
-        }
-    }
-
-    // 探测 tunneld 是否在跑（pgrep 匹配完整命令行）
-    func checkTunneld() {
-        DispatchQueue.global(qos: .background).async {
-            let task = Process()
-            let pipe = Pipe()
-            task.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
-            task.arguments = ["-f", "pymobiledevice3.*remote.*tunneld"]
-            task.standardOutput = pipe
-            task.standardError = Pipe()
-            var running = false
-            do {
-                try task.run()
-                task.waitUntilExit()
-                running = task.terminationStatus == 0
-            } catch { running = false }
-            DispatchQueue.main.async {
-                if running != self.tunneldRunning {
-                    self.log(running ? "[TUNNELD] ✅ Detected running" : "[TUNNELD] ⚠️ Not running")
-                    // tunneld 刚起来 → 如果卡在 "Waiting for tunneld…"，回到 idle
-                    if running, case .working(let title, _) = self.status,
-                       title.lowercased().contains("tunneld") {
-                        self.setStatus(.idle)
-                    }
-                }
-                self.tunneldRunning = running
-            }
-        }
-    }
-
-    func checkUSBConnection() {
-        if isWorking { return }
-        DispatchQueue.global(qos: .background).async {
-            let task = Process()
-            let pipe = Pipe()
-            task.executableURL = URL(fileURLWithPath: "/usr/sbin/ioreg")
-            task.arguments = ["-p", "IOUSB", "-w0"]
-            task.standardOutput = pipe
-            do {
-                try task.run(); task.waitUntilExit()
-                let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                let output = String(data: data, encoding: .utf8) ?? ""
-                let hasDevice = output.contains("iPhone")
-                DispatchQueue.main.async {
-                    let becameConnected = hasDevice && !self.isDeviceConnected
-                    if hasDevice != self.isDeviceConnected {
-                        self.log("[HARDWARE] I/O Registry Update:")
-                        self.log(hasDevice ? "[HARDWARE] + DEVICE ATTACHED (iPhone)" : "[HARDWARE] - DEVICE REMOVED")
-                    }
-                    self.isDeviceConnected = hasDevice
-                    self.connectionStatusText = hasDevice ? "READY TO INJECT" : "CONNECT VIA USB CABLE"
-                    if !hasDevice {
-                        self.deviceIOSVersion = ""
-                        self.deviceIOSMajor = 0
-                        self.tunneldHintDismissed = false
-                    } else if becameConnected && self.isEnvironmentReady {
-                        self.fetchDeviceIOSVersion()
-                    }
-                }
-            } catch {
-                DispatchQueue.main.async { self.isDeviceConnected = false }
-            }
-        }
+    private func switchBackend(to track: BackendTrack) {
+        guard track != activeBackendTrack else { return }
+        backendTrackRaw = track.rawValue
+        appModel.backendTrack = track
+        appModel.resetRuntimeState()
+        tunneldHintDismissed = false
+        diagnostics.append("[BACKEND] Switched to \(track.displayName)")
+        setStatus(.idle)
+        performInitialRefresh()
     }
 
     func searchCityOnly() {
@@ -906,7 +985,7 @@ struct ContentView: View {
             log("[USER] ❌ iOS \(deviceIOSVersion) requires tunneld — aborting")
             setStatus(.failure(
                 "iOS \(deviceIOSVersion) tunnel isn't running",
-                "pymobiledevice3 would silently no-op. Click Launch in the yellow banner."
+                "The legacy backend would no-op here. Click Launch in the yellow banner first."
             ))
             tunneldHintDismissed = false
             return
@@ -923,10 +1002,10 @@ struct ContentView: View {
         log("[DATA] 📡 LATITUDE:  \(latitude)")
         log("[DATA] 📡 LONGITUDE: \(longitude)")
         log("[KERNEL] ⚡️ INITIATING INJECTION SEQUENCE...")
-        executeCommand(args: ["developer", "simulate-location", "set", "--", latitude, longitude])
+        executeTeleport()
     }
 
-    func executeCommand(args: [String]) {
+    func executeTeleport() {
         guard !detectedCliPath.isEmpty else {
             log("[ERROR] Abort: CLI Path is empty.")
             setStatus(.failure("Teleport failed", "pymobiledevice3 path missing."))
@@ -937,7 +1016,7 @@ struct ContentView: View {
         DispatchQueue.global(qos: .userInitiated).async {
             self.log("[SYS] Spawning Child Process...")
             self.log("[SYS] Executable: \(self.detectedCliPath)")
-            self.log("[SYS] Arguments: \(args.joined(separator: " "))")
+            self.log("[SYS] Arguments: developer simulate-location set -- \(self.latitude) \(self.longitude)")
 
             if ProcessInfo.processInfo.environment["XCODE_RUNNING_FOR_PREVIEWS"] == "1" {
                 Thread.sleep(forTimeInterval: 0.5)
@@ -947,66 +1026,15 @@ struct ContentView: View {
                 return
             }
 
-            let task = Process()
-            let pipe = Pipe()
-            let errorPipe = Pipe()
-
-            task.executableURL = URL(fileURLWithPath: self.detectedCliPath)
-            task.arguments = args
-
-            var env = ProcessInfo.processInfo.environment
-            env["LANG"] = "en_US.UTF-8"
-            env["PYTHONIOENCODING"] = "utf-8"
-            task.environment = env
             self.log("[SYS] ENV: LANG=en_US.UTF-8 set.")
 
-            task.standardOutput = pipe; task.standardError = errorPipe
-
-            do {
-                self.log("[SYS] Calling run()...")
-                try task.run()
-                self.log("[SYS] PID: \(task.processIdentifier) (RUNNING)")
-
-                task.waitUntilExit()
-
-                let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
-                let output = String(data: data, encoding: .utf8) ?? ""
-                let errorOutput = String(data: errorData, encoding: .utf8) ?? ""
-
-                if output.isEmpty { self.log("[STDOUT] (Empty)") }
-                else { self.log("[STDOUT] >> \(output.trimmingCharacters(in: .whitespacesAndNewlines))") }
-
-                if errorOutput.isEmpty { self.log("[STDERR] (Empty)") }
-                else { self.log("[STDERR] >> \(errorOutput.trimmingCharacters(in: .whitespacesAndNewlines))") }
-
-                self.log("[SYS] Process Exited. Code: \(task.terminationStatus)")
-
-                // 假成功检测：pymobiledevice3 在 iOS 17+ 无 tunneld 时可能 exit 0
-                // 但 stderr 里会留下 rsd / tunneld / traceback 之类的痕迹
-                let stderrLower = errorOutput.lowercased()
-                let stdoutLower = output.lowercased()
-                let suspicious = ["rsd", "tunneld", "traceback", "exception", "no device",
-                                  "not paired", "permission denied", "connectionrefused",
-                                  "connectionabort", "remoteserviced", "quic"]
-                let looksBad = suspicious.contains { stderrLower.contains($0) || stdoutLower.contains($0) }
-
-                if task.terminationStatus == 0 && !looksBad {
-                    self.log("[RESULT] ✅ SUCCESS: Signal Injected.")
-                    self.setStatus(.success("GPS moved", "\(self.latitude), \(self.longitude)"))
-                } else if task.terminationStatus == 0 && looksBad {
-                    self.log("[RESULT] ⚠️ Exit 0 but stderr looks bad — treating as failure.")
-                    let reason = self.humanize(stderr: errorOutput, stdout: output, exit: 0)
-                    self.setStatus(.failure("Teleport may not have worked", reason))
-                } else {
-                    self.log("[RESULT] ❌ FAILURE: Non-zero exit code.")
-                    let reason = self.humanize(stderr: errorOutput, stdout: output, exit: task.terminationStatus)
-                    self.setStatus(.failure("Teleport failed", reason))
-                }
-            } catch {
-                self.log("[EXCEPTION] \(error.localizedDescription)")
-                self.setStatus(.failure("Teleport failed", error.localizedDescription))
+            let result = self.legacyTeleportService.execute(
+                request: TeleportRequest(latitude: self.latitude, longitude: self.longitude)
+            )
+            for line in result.logLines {
+                self.log(line)
             }
+            self.setStatus(result.status)
             self.log("------------------------------------------")
             DispatchQueue.main.async { self.isWorking = false }
         }
@@ -1118,5 +1146,3 @@ struct NativeMapView: NSViewRepresentable {
         }
     }
 }
-
-#Preview { ContentView().frame(width: 450, height: 750) }
