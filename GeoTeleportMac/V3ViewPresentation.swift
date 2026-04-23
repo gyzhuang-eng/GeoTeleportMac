@@ -66,15 +66,15 @@ struct V3ViewPresentation {
                    appModel.tunnelAssessment == nil {
                     switch appModel.readinessGate {
                     case .backendBootstrap:
-                        sessionTitle = "No-Python backend bootstrapping"
+                        sessionTitle = "Device-agent backend bootstrapping"
                         icon = "wrench.adjustable"
                         tint = alertRed
                     case .injectionTransport:
-                        sessionTitle = "No-Python backend bootstrapped"
+                        sessionTitle = "Device-agent backend bootstrapped"
                         icon = "server.rack"
                         tint = Color(red: 1.0, green: 0.80, blue: 0.30)
                     default:
-                        sessionTitle = "No-Python backend preparing"
+                        sessionTitle = "Device-agent backend preparing"
                         icon = "server.rack"
                         tint = Color(red: 1.0, green: 0.80, blue: 0.30)
                     }
@@ -96,11 +96,11 @@ struct V3ViewPresentation {
                 } else {
                     switch appModel.sessionState {
                     case .backendUnavailable:
-                        sessionTitle = "No-Python backend unavailable"
+                        sessionTitle = "Device-agent backend unavailable"
                         icon = "wrench.adjustable"
                         tint = alertRed
                     case .disconnected:
-                        sessionTitle = "No-Python backend waiting for device"
+                        sessionTitle = "Device-agent backend waiting for device"
                         icon = "iphone.gen3.slash"
                         tint = alertRed
                     case .usbDetected:
@@ -112,7 +112,7 @@ struct V3ViewPresentation {
                         icon = "rectangle.on.rectangle.badge.person.crop"
                         tint = Color(red: 1.0, green: 0.80, blue: 0.30)
                     case .deviceInfoPending:
-                        sessionTitle = "No-Python device info pending"
+                        sessionTitle = "Device-agent device info pending"
                         icon = "iphone.gen3.radiowaves.left.and.right"
                         tint = Color(red: 1.0, green: 0.80, blue: 0.30)
                     case .tunnelObservationOnly:
@@ -121,11 +121,11 @@ struct V3ViewPresentation {
                         tint = Color(red: 1.0, green: 0.80, blue: 0.30)
                     case .tunnelRequired:
                         if appModel.sessionBlocker == .tunnelFailed {
-                            sessionTitle = "No-Python tunnel startup failed"
+                            sessionTitle = "Device-agent tunnel startup failed"
                             icon = "xmark.shield.fill"
                             tint = alertRed
                         } else {
-                            sessionTitle = "No-Python session needs tunnel"
+                            sessionTitle = "Device-agent session needs tunnel"
                             icon = "lock.shield.fill"
                             tint = Color(red: 1.0, green: 0.80, blue: 0.30)
                         }
@@ -134,16 +134,16 @@ struct V3ViewPresentation {
                             sessionTitle = "Ready session boundary held"
                             icon = "shield.lefthalf.filled"
                         } else {
-                            sessionTitle = "No-Python session visible"
+                            sessionTitle = "Device-agent session visible"
                             icon = "hammer.circle.fill"
                         }
                         tint = Color(red: 1.0, green: 0.80, blue: 0.30)
                     case .readyForInjection:
-                        sessionTitle = "No-Python session ready"
+                        sessionTitle = "Device-agent session ready"
                         icon = "checkmark.seal.fill"
                         tint = terminalGreen
                     case .degraded:
-                        sessionTitle = "No-Python session degraded"
+                        sessionTitle = "Device-agent session degraded"
                         icon = "exclamationmark.triangle.fill"
                         tint = alertRed
                     }
@@ -153,6 +153,7 @@ struct V3ViewPresentation {
                     subtitle: [
                         appModel.bootstrapSummary,
                         appModel.sessionSummary,
+                        appModel.lastLocationCommandSummary,
                         appModel.injectionStageSummary,
                         appModel.tunnelStageSummary,
                         appModel.healthSummary,
@@ -177,6 +178,8 @@ struct V3ViewPresentation {
                         appModel.tunnelLifecycleSummary,
                         appModel.tunnelSessionSummary,
                         appModel.tunnelHealthSummary,
+                        appModel.tunnelEndpointSummary,
+                        appModel.injectionTransportSummary,
                         appModel.tunnelIntentSummary,
                         appModel.injectionStageActionText,
                         appModel.tunnelStageActionText,
@@ -196,7 +199,7 @@ struct V3ViewPresentation {
             if !appModel.isEnvironmentReady {
                 return StatusDisplayModel(
                     title: "Device backend unavailable",
-                    subtitle: "The current preview still depends on the legacy transport layer. Press Rescan to probe it again.",
+                    subtitle: "The current preview still depends on the compatibility transport layer. Press Rescan to probe it again.",
                     icon: "wrench.adjustable",
                     tint: alertRed,
                     showSpinner: false
@@ -231,7 +234,12 @@ struct V3ViewPresentation {
             }
             return StatusDisplayModel(
                 title: "Ready to teleport",
-                subtitle: "Drag the pin, search a city, or tap a preset.",
+                subtitle: [
+                    "Drag the pin, search a city, or tap a preset.",
+                    appModel.lastLocationCommandSummary
+                ]
+                    .filter { !$0.isEmpty }
+                    .joined(separator: " "),
                 icon: "checkmark.seal.fill",
                 tint: terminalGreen,
                 showSpinner: false
@@ -318,7 +326,7 @@ struct V3ViewPresentation {
             case .injectionMissing:
                 return appModel.readinessGate == .injectionTransport
                     ? "WIRE INJECTION TRANSPORT"
-                    : "INJECTION NOT IMPLEMENTED YET"
+                    : "INJECTION TRANSPORT BLOCKED"
             case .degraded:
                 return "SESSION DEGRADED"
             case .none:
@@ -341,6 +349,16 @@ struct V3ViewPresentation {
             return !isWorking && appModel.sessionState == .readyForInjection && coordsValid
         }
         return !isWorking && appModel.isDeviceConnected && appModel.isEnvironmentReady && coordsValid && !appModel.needsTunnel
+    }
+
+    static func canClearLocation(
+        isWorking: Bool,
+        appModel: V3AppModel
+    ) -> Bool {
+        if appModel.backendTrack == .noPythonStub {
+            return !isWorking && appModel.sessionState == .readyForInjection
+        }
+        return !isWorking && appModel.isDeviceConnected && appModel.isEnvironmentReady && !appModel.needsTunnel
     }
 
     static func shouldShowButtonWarning(

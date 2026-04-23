@@ -91,7 +91,7 @@ struct V3RuntimeCoordinator {
         if !resolvedCLIPath.isEmpty {
             logLines.append("[SCAN] ✅ FOUND executable: \(resolvedCLIPath)")
         } else if backend.track == .noPythonStub {
-            logLines.append("[BACKEND] No-Python scaffold selected")
+            logLines.append("[BACKEND] Device-agent runtime selected")
             if let noPythonBackend = backend as? NoPythonBackendStub {
                 let probe = noPythonBackend.availabilityProbe()
                 if let summary = probe.availability.summary, !summary.isEmpty {
@@ -104,11 +104,11 @@ struct V3RuntimeCoordinator {
                 }
                 logLines.append(contentsOf: probe.events.map(\.logLine))
             }
-            logLines.append("[BACKEND] Device probing is available. Location injection is still pending.")
+            logLines.append("[BACKEND] Device probing plus Xcode-backed location transport scaffolding are available.")
         } else {
             logLines.append("------------------------------------------")
-            logLines.append("[INIT] CRITICAL FAILURE: legacy device backend not found.")
-            logLines.append("[HELP] This preview still requires the current CLI path until the no-Python backend replaces it.")
+            logLines.append("[INIT] CRITICAL FAILURE: compatibility device backend not found.")
+            logLines.append("[HELP] Compatibility transport is still using the current CLI bridge until the device-agent transport fully replaces it.")
             logLines.append("------------------------------------------")
         }
 

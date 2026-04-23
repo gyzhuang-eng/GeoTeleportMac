@@ -8,13 +8,16 @@ protocol DeviceAgentServicing {
 struct StubDeviceAgentService: DeviceAgentServicing {
     private let deviceInfoTransportService: DeviceInfoTransportServing
     private let tunnelController: TunnelStateControlling
+    private let injectionTransportService: InjectionTransportServing
 
     init(
         deviceInfoTransportService: DeviceInfoTransportServing = DeviceInfoTransportServiceStack(),
-        tunnelController: TunnelStateControlling = TunnelStateControllerStack()
+        tunnelController: TunnelStateControlling = TunnelStateControllerStack(),
+        injectionTransportService: InjectionTransportServing = InjectionTransportServiceStack()
     ) {
         self.deviceInfoTransportService = deviceInfoTransportService
         self.tunnelController = tunnelController
+        self.injectionTransportService = injectionTransportService
     }
 
     func handle(_ request: DeviceAgentRequest) -> DeviceAgentResponse {
@@ -24,7 +27,7 @@ struct StubDeviceAgentService: DeviceAgentServicing {
                 .availability(
                     DeviceAgentAvailability(
                         isReachable: true,
-                        summary: "Child-process agent reachable; bootstrap transport is up, but product-owned session and injection layers are still missing",
+                        summary: "Child-process agent reachable; bootstrap transport is up, while session readiness and injection transport still depend on later typed probes.",
                         readinessGate: .injectionTransport,
                         refreshIntent: DeviceAgentRefreshIntent(
                             scope: .deviceOnly,
@@ -41,7 +44,7 @@ struct StubDeviceAgentService: DeviceAgentServicing {
                             ),
                             DeviceAgentDiagnosticEvent(
                                 level: .warning,
-                                message: "No-Python location injection has not been attached yet"
+                                message: "Injection transport is now typed, but real execution still depends on later device-identifier and harness readiness probes"
                             )
                         ]
                     )
@@ -53,7 +56,8 @@ struct StubDeviceAgentService: DeviceAgentServicing {
         case .fetchTunnelState(let device):
             let assessment = DeviceAgentAssessmentFactory.makeTunnelAssessment(
                 for: device,
-                tunnelController: tunnelController
+                tunnelController: tunnelController,
+                injectionTransportService: injectionTransportService
             )
             return .success(
                 .tunnelState(
@@ -72,14 +76,341 @@ struct StubDeviceAgentService: DeviceAgentServicing {
                     )
                 )
             )
-        case .setLocation:
-            return .failure(
-                DeviceAgentFailure(
-                    code: .unsupportedOperation,
-                    message: "Location injection is not implemented in the no-Python agent yet."
-                )
+        case .setLocation(let request):
+            let probe = SystemUSBProbe.detectIPhone()
+            let deviceState = SystemUSBProbeResultAdapter.makeState(
+                from: probe,
+                deviceInfoTransportService: deviceInfoTransportService
+            )
+            let tunnelAssessment = DeviceAgentAssessmentFactory.makeTunnelAssessment(
+                for: deviceState.snapshot,
+                tunnelController: tunnelController,
+                injectionTransportService: injectionTransportService
+            )
+            return injectionTransportService.setLocation(
+                request,
+                snapshot: deviceState.snapshot,
+                tunnelAssessment: tunnelAssessment
+            )
+        case .clearLocation:
+            let probe = SystemUSBProbe.detectIPhone()
+            let deviceState = SystemUSBProbeResultAdapter.makeState(
+                from: probe,
+                deviceInfoTransportService: deviceInfoTransportService
+            )
+            let tunnelAssessment = DeviceAgentAssessmentFactory.makeTunnelAssessment(
+                for: deviceState.snapshot,
+                tunnelController: tunnelController,
+                injectionTransportService: injectionTransportService
+            )
+            return injectionTransportService.clearLocation(
+                snapshot: deviceState.snapshot,
+                tunnelAssessment: tunnelAssessment
             )
         }
+    }
+
+    static func runExpectedRSDEndpointSelfCheckReport() -> String {
+        ProductOwnedTunnelStateController.runExpectedRSDEndpointSelfCheckReport()
+    }
+
+    static func runInjectionTransportSelfCheckReport() -> String {
+        let unavailableService = EndpointBackedInjectionTransportCommandAdapter(
+            resolveCLIPath: { nil }
+        )
+        let availableService = EndpointBackedInjectionTransportCommandAdapter(
+            resolveCLIPath: { "/opt/homebrew/bin/pymobiledevice3" }
+        )
+        let syntheticSnapshot = DeviceSnapshot(
+            isConnected: true,
+            connectionSummary: "SELF-CHECK",
+            iosVersion: "17.4",
+            deviceName: "Self Check iPhone",
+            deviceIdentifier: "self-check-device-id",
+            serialSuffix: "0000",
+            vendorID: "0x05ac",
+            productID: "0x12a8",
+            probeSource: "self-check",
+            matchedDeviceCount: 1
+        )
+        let unavailableProbe = unavailableService.probeTransport(
+            snapshot: syntheticSnapshot,
+            tunnelEndpointResult: nil
+        )
+        let verifiedEndpoint = DeviceAgentTunnelEndpointResult(
+            state: .verified,
+            artifact: DeviceAgentTunnelEndpointArtifact(
+                artifactID: "tunnel.endpoint.self-check",
+                host: "127.0.0.1",
+                port: 60123,
+                sourceTunnelSessionID: "tunnel.session.self-check",
+                sourceHealthState: .verified,
+                sourceProtocolHint: .expectedRSDHandshakeVerified,
+                summary: "Synthetic verified tunnel endpoint for injection-transport self-check."
+            ),
+            summary: "Synthetic verified tunnel endpoint is available for injection-transport self-check.",
+            nextAction: "Consume the verified endpoint artifact directly.",
+            confidence: "high"
+        )
+        let endpointBackedProbe = availableService.probeTransport(
+            snapshot: syntheticSnapshot,
+            tunnelEndpointResult: verifiedEndpoint
+        )
+        let invocation = availableService.makeSetLocationInvocation(
+            request: TeleportRequest(latitude: "1.23", longitude: "4.56"),
+            tunnelEndpointResult: verifiedEndpoint
+        )
+        let clearInvocation = availableService.makeClearLocationInvocation(
+            tunnelEndpointResult: verifiedEndpoint
+        )
+        let serviceUnavailableFailure = invocation.map {
+            availableService.classifyCommandFailure(
+                result: ShellCommandResult(
+                    stdout: "",
+                    stderr: "Failed to start service. Possible reasons are:\n- Make sure you passed the --rsd option to the subcommand",
+                    exitCode: 1
+                ),
+                invocation: $0
+            )
+        }
+        let transportMismatchFailure = invocation.map {
+            availableService.classifyCommandFailure(
+                result: ShellCommandResult(
+                    stdout: "",
+                    stderr: "Error: No such option: --rsd",
+                    exitCode: 2
+                ),
+                invocation: $0
+            )
+        }
+        let genericExecutionFailure = invocation.map {
+            availableService.classifyCommandFailure(
+                result: ShellCommandResult(
+                    stdout: "",
+                    stderr: "Traceback: unexpected failure",
+                    exitCode: 7
+                ),
+                invocation: $0
+            )
+        }
+
+        struct Check {
+            let name: String
+            let passed: Bool
+            let detail: String
+        }
+
+        let checks: [Check] = [
+            Check(
+                name: "nil-endpoint-remains-unavailable",
+                passed: unavailableProbe.transportState == .unavailable
+                    && unavailableProbe.contract.phase == .probeOnly
+                    && unavailableProbe.sourceTunnelEndpointArtifactID == nil,
+                detail: "state=\(unavailableProbe.transportState.rawValue) phase=\(unavailableProbe.contract.phase.rawValue) artifact=\(unavailableProbe.sourceTunnelEndpointArtifactID ?? "nil")"
+            ),
+            Check(
+                name: "verified-endpoint-enables-endpoint-backed-command",
+                passed: endpointBackedProbe.transportState == .endpointBackedCommand
+                    && endpointBackedProbe.contract.phase == .endpointBackedCommand
+                    && endpointBackedProbe.sourceTunnelEndpointArtifactID == verifiedEndpoint.artifact.artifactID,
+                detail: "state=\(endpointBackedProbe.transportState.rawValue) phase=\(endpointBackedProbe.contract.phase.rawValue) artifact=\(endpointBackedProbe.sourceTunnelEndpointArtifactID ?? "nil")"
+            ),
+            Check(
+                name: "verified-endpoint-summary-mentions-endpoint",
+                passed: endpointBackedProbe.summary.contains("127.0.0.1:60123"),
+                detail: endpointBackedProbe.summary
+            ),
+            Check(
+                name: "invocation-builds-rsd-command",
+                passed: invocation?.arguments == [
+                    "developer",
+                    "dvt",
+                    "simulate-location",
+                    "set",
+                    "--rsd",
+                    "127.0.0.1",
+                    "60123",
+                    "--",
+                    "1.23",
+                    "4.56"
+                ],
+                detail: invocation.map { "\($0.executable) \($0.arguments.joined(separator: " "))" } ?? "nil"
+            ),
+            Check(
+                name: "clear-invocation-builds-rsd-command",
+                passed: clearInvocation?.arguments == [
+                    "developer",
+                    "dvt",
+                    "simulate-location",
+                    "clear",
+                    "--rsd",
+                    "127.0.0.1",
+                    "60123"
+                ],
+                detail: clearInvocation.map { "\($0.executable) \($0.arguments.joined(separator: " "))" } ?? "nil"
+            ),
+            Check(
+                name: "classifier-recognizes-session-unavailable",
+                passed: serviceUnavailableFailure?.code == .agentUnavailable,
+                detail: serviceUnavailableFailure.map { "\($0.code.rawValue): \($0.message)" } ?? "nil"
+            ),
+            Check(
+                name: "classifier-recognizes-transport-mismatch",
+                passed: transportMismatchFailure?.code == .transportUnimplemented,
+                detail: transportMismatchFailure.map { "\($0.code.rawValue): \($0.message)" } ?? "nil"
+            ),
+            Check(
+                name: "classifier-keeps-generic-command-failures-typed",
+                passed: genericExecutionFailure?.code == .transportExecutionFailed,
+                detail: genericExecutionFailure.map { "\($0.code.rawValue): \($0.message)" } ?? "nil"
+            )
+        ]
+
+        var lines: [String] = []
+        var failureCount = 0
+
+        for check in checks {
+            if check.passed {
+                lines.append("PASS \(check.name): \(check.detail)")
+            } else {
+                failureCount += 1
+                lines.append("FAIL \(check.name): \(check.detail)")
+            }
+        }
+
+        if failureCount == 0 {
+            lines.append("Injection transport self-check passed (\(checks.count) cases).")
+        } else {
+            lines.append("Injection transport self-check failed (\(failureCount)/\(checks.count) cases).")
+        }
+
+        return lines.joined(separator: "\n") + "\n"
+    }
+
+    static func runXcodeLocationHarnessSelfCheckReport() -> String {
+        let service = XcodeTestLocationInjectionTransportAdapter()
+        let disconnectedProbe = service.probeTransport(
+            snapshot: DeviceSnapshot(
+                isConnected: false,
+                connectionSummary: "NO DEVICE",
+                iosVersion: nil,
+                deviceName: nil,
+                deviceIdentifier: nil,
+                serialSuffix: nil,
+                vendorID: nil,
+                productID: nil,
+                probeSource: "self-check",
+                matchedDeviceCount: 0
+            ),
+            tunnelEndpointResult: nil
+        )
+        let connectedSnapshot = DeviceSnapshot(
+            isConnected: true,
+            connectionSummary: "SELF-CHECK",
+            iosVersion: "17.4",
+            deviceName: "Self Check iPhone",
+            deviceIdentifier: "self-check-device-id",
+            serialSuffix: "0000",
+            vendorID: "0x05ac",
+            productID: "0x12a8",
+            probeSource: "self-check",
+            matchedDeviceCount: 1
+        )
+        let readyProbe = service.probeTransport(
+            snapshot: connectedSnapshot,
+            tunnelEndpointResult: nil
+        )
+        let buildCheck = service.runHarnessBuildSelfCheck()
+        let signingFailure = service.classifyFailure(
+            result: ShellCommandResult(
+                stdout: "",
+                stderr: "No profiles for 'GeoTeleportLocationHarnessTests' were found: Xcode couldn't find any iOS App Development provisioning profiles matching 'GeoTeleportLocationHarnessTests'.",
+                exitCode: 65
+            ),
+            invocation: InjectionTransportCommandInvocation(
+                executable: "/usr/bin/xcrun",
+                arguments: [
+                    "xcodebuild",
+                    "test",
+                    "-scheme", XcodeLocationHarnessPackage.packageName
+                ],
+                environment: [:],
+                workingDirectory: "/tmp",
+                commandSummary: "xcodebuild test -scheme \(XcodeLocationHarnessPackage.packageName)"
+            )
+        )
+        let destinationFailure = service.classifyFailure(
+            result: ShellCommandResult(
+                stdout: "",
+                stderr: "Unable to find a destination matching the provided destination specifier.",
+                exitCode: 70
+            ),
+            invocation: InjectionTransportCommandInvocation(
+                executable: "/usr/bin/xcrun",
+                arguments: [
+                    "xcodebuild",
+                    "test",
+                    "-scheme", XcodeLocationHarnessPackage.packageName
+                ],
+                environment: [:],
+                workingDirectory: "/tmp",
+                commandSummary: "xcodebuild test -scheme \(XcodeLocationHarnessPackage.packageName)"
+            )
+        )
+
+        struct Check {
+            let name: String
+            let passed: Bool
+            let detail: String
+        }
+
+        let checks: [Check] = [
+            Check(
+                name: "disconnected-device-keeps-harness-unavailable",
+                passed: disconnectedProbe.transportState == .unavailable,
+                detail: disconnectedProbe.summary
+            ),
+            Check(
+                name: "connected-device-with-identifier-enables-harness-probe",
+                passed: readyProbe.transportState == .xcodeTestHarness
+                    && readyProbe.contract.phase == .xcodeTestHarness,
+                detail: readyProbe.summary
+            ),
+            Check(
+                name: "harness-package-builds-for-generic-ios",
+                passed: buildCheck.exitCode == 0,
+                detail: buildCheck.detail
+            ),
+            Check(
+                name: "harness-classifier-recognizes-signing-failures",
+                passed: signingFailure.code == .transportExecutionFailed,
+                detail: "\(signingFailure.code.rawValue): \(signingFailure.message)"
+            ),
+            Check(
+                name: "harness-classifier-recognizes-destination-failures",
+                passed: destinationFailure.code == .agentUnavailable,
+                detail: "\(destinationFailure.code.rawValue): \(destinationFailure.message)"
+            )
+        ]
+
+        var lines: [String] = []
+        var failureCount = 0
+        for check in checks {
+            if check.passed {
+                lines.append("PASS \(check.name): \(check.detail)")
+            } else {
+                failureCount += 1
+                lines.append("FAIL \(check.name): \(check.detail)")
+            }
+        }
+
+        if failureCount == 0 {
+            lines.append("Xcode location harness self-check passed (\(checks.count) cases).")
+        } else {
+            lines.append("Xcode location harness self-check failed (\(failureCount)/\(checks.count) cases).")
+        }
+
+        return lines.joined(separator: "\n") + "\n"
     }
 }
 
@@ -92,6 +423,7 @@ private struct SystemUSBProbe {
 
     let isConnected: Bool
     let displayName: String?
+    let deviceIdentifier: String?
     let serialSuffix: String?
     let speed: String?
     let vendorID: String?
@@ -118,6 +450,7 @@ private struct SystemUSBProbe {
                 let fallbackProbe = SystemUSBProbe(
                     isConnected: isConnected,
                     displayName: displayName,
+                    deviceIdentifier: nil,
                     serialSuffix: nil,
                     speed: nil,
                     vendorID: nil,
@@ -143,6 +476,7 @@ private struct SystemUSBProbe {
                 return SystemUSBProbe(
                     isConnected: false,
                     displayName: nil,
+                    deviceIdentifier: nil,
                     serialSuffix: nil,
                     speed: nil,
                     vendorID: nil,
@@ -201,6 +535,7 @@ private struct SystemUSBProbe {
                     SystemUSBProbe(
                         isConnected: true,
                         displayName: match.displayName,
+                        deviceIdentifier: nil,
                         serialSuffix: match.serialSuffix,
                         speed: match.speed,
                         vendorID: match.vendorID,
@@ -222,6 +557,7 @@ private struct SystemUSBProbe {
                 SystemUSBProbe(
                     isConnected: false,
                     displayName: nil,
+                    deviceIdentifier: nil,
                     serialSuffix: nil,
                     speed: nil,
                     vendorID: nil,
@@ -325,6 +661,7 @@ private struct SystemUSBProbe {
                 return SystemUSBProbe(
                     isConnected: probe.isConnected,
                     displayName: probe.displayName,
+                    deviceIdentifier: probe.deviceIdentifier,
                     serialSuffix: probe.serialSuffix,
                     speed: probe.speed,
                     vendorID: probe.vendorID,
@@ -352,6 +689,7 @@ private struct SystemUSBProbe {
             return SystemUSBProbe(
                 isConnected: probe.isConnected,
                 displayName: probe.displayName ?? match.name,
+                deviceIdentifier: match.identifier.isEmpty ? probe.deviceIdentifier : match.identifier,
                 serialSuffix: probe.serialSuffix,
                 speed: probe.speed,
                 vendorID: probe.vendorID,
@@ -365,6 +703,7 @@ private struct SystemUSBProbe {
             return SystemUSBProbe(
                 isConnected: probe.isConnected,
                 displayName: probe.displayName,
+                deviceIdentifier: probe.deviceIdentifier,
                 serialSuffix: probe.serialSuffix,
                 speed: probe.speed,
                 vendorID: probe.vendorID,
@@ -393,6 +732,7 @@ private struct USBMobileAppleDevice {
 
 private struct XcodeAttachedAppleDevice {
     let name: String
+    let identifier: String
     let operatingSystemVersion: String?
     let interface: String?
 
@@ -430,7 +770,6 @@ private enum XcodeDeviceMetadataProbe {
 
             let devices = json.compactMap { dictionary -> XcodeAttachedAppleDevice? in
                 guard (dictionary["simulator"] as? Bool) != true else { return nil }
-                guard (dictionary["available"] as? Bool) != false else { return nil }
                 let name = (dictionary["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 guard !name.isEmpty else { return nil }
                 guard isSupportedMobilePlatform(dictionary["platform"] as? String) else { return nil }
@@ -441,6 +780,7 @@ private enum XcodeDeviceMetadataProbe {
                 }
                 return XcodeAttachedAppleDevice(
                     name: name,
+                    identifier: (dictionary["identifier"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "",
                     operatingSystemVersion: dictionary["operatingSystemVersion"] as? String,
                     interface: dictionary["interface"] as? String
                 )
@@ -512,7 +852,1141 @@ struct DeviceAgentTunnelControllerSnapshot {
     let lifecycleResult: DeviceAgentTunnelLifecycleResult
     let tunnelSession: DeviceAgentTunnelSession?
     let healthResult: DeviceAgentTunnelHealthResult?
+    let endpointResult: DeviceAgentTunnelEndpointResult?
     let events: [DeviceAgentDiagnosticEvent]
+}
+
+protocol InjectionTransportServing {
+    var transportID: String { get }
+    func probeTransport(
+        snapshot: DeviceSnapshot,
+        tunnelEndpointResult: DeviceAgentTunnelEndpointResult?
+    ) -> DeviceAgentInjectionTransportProbeResult
+    func setLocation(
+        _ request: TeleportRequest,
+        snapshot: DeviceSnapshot,
+        tunnelAssessment: DeviceAgentSessionAssessment?
+    ) -> DeviceAgentResponse
+    func clearLocation(
+        snapshot: DeviceSnapshot,
+        tunnelAssessment: DeviceAgentSessionAssessment?
+    ) -> DeviceAgentResponse
+}
+
+struct InjectionTransportServiceStack: InjectionTransportServing {
+    let services: [any InjectionTransportServing]
+
+    var transportID: String {
+        services.first?.transportID ?? "injection.transport.none"
+    }
+
+    init(services: [any InjectionTransportServing] = [
+        XcodeTestLocationInjectionTransportAdapter(),
+        EndpointBackedInjectionTransportCommandAdapter()
+    ]) {
+        self.services = services
+    }
+
+    func probeTransport(
+        snapshot: DeviceSnapshot,
+        tunnelEndpointResult: DeviceAgentTunnelEndpointResult?
+    ) -> DeviceAgentInjectionTransportProbeResult {
+        let results = services.map {
+            $0.probeTransport(snapshot: snapshot, tunnelEndpointResult: tunnelEndpointResult)
+        }
+        if let ready = results.first(where: { $0.transportState == .xcodeTestHarness }) {
+            return ready
+        }
+        if let ready = results.first(where: { $0.transportState == .endpointBackedCommand }) {
+            return ready
+        }
+        if let ready = results.first(where: { $0.transportState == .endpointBackedStub }) {
+            return ready
+        }
+        return results.last ?? NullInjectionTransportService().probeTransport(
+            snapshot: snapshot,
+            tunnelEndpointResult: tunnelEndpointResult
+        )
+    }
+
+    func setLocation(
+        _ request: TeleportRequest,
+        snapshot: DeviceSnapshot,
+        tunnelAssessment: DeviceAgentSessionAssessment?
+    ) -> DeviceAgentResponse {
+        guard snapshot.isConnected else {
+            return .failure(
+                DeviceAgentFailure(
+                    code: .invalidRequest,
+                    message: "No connected iPhone session is available for device-agent injection."
+                )
+            )
+        }
+        let service = preferredService(snapshot: snapshot, tunnelAssessment: tunnelAssessment)
+        return service.setLocation(request, snapshot: snapshot, tunnelAssessment: tunnelAssessment)
+    }
+
+    func clearLocation(
+        snapshot: DeviceSnapshot,
+        tunnelAssessment: DeviceAgentSessionAssessment?
+    ) -> DeviceAgentResponse {
+        guard snapshot.isConnected else {
+            return .failure(
+                DeviceAgentFailure(
+                    code: .invalidRequest,
+                    message: "No connected iPhone session is available for device-agent location clear."
+                )
+            )
+        }
+        let service = preferredService(snapshot: snapshot, tunnelAssessment: tunnelAssessment)
+        return service.clearLocation(snapshot: snapshot, tunnelAssessment: tunnelAssessment)
+    }
+
+    private func preferredService(
+        snapshot: DeviceSnapshot,
+        tunnelAssessment: DeviceAgentSessionAssessment?
+    ) -> any InjectionTransportServing {
+        let tunnelEndpointResult = tunnelAssessment?.tunnelEndpointResult
+        return services.first {
+            let state = $0.probeTransport(
+                snapshot: snapshot,
+                tunnelEndpointResult: tunnelEndpointResult
+            ).transportState
+            return state != .unavailable
+        } ?? services.first ?? NullInjectionTransportService()
+    }
+}
+
+fileprivate struct InjectionTransportCommandInvocation {
+    let executable: String
+    let arguments: [String]
+    let environment: [String: String]
+    let workingDirectory: String?
+    let commandSummary: String
+}
+
+fileprivate enum InjectionTransportCommandFailureKind {
+    case invalidRequest
+    case sessionUnavailable
+    case transportUnavailable
+    case executionFailed
+}
+
+private enum XcodeLocationHarnessPackage {
+    static let packageName = "GeoTeleportLocationHarness"
+    static let testSelector = "GeoTeleportLocationHarnessTests/GeoTeleportLocationHarnessTests/testApplyRequestedLocation"
+
+    static func packageDirectory(filePath: String = #filePath) -> String? {
+        if let materialized = materializedPackageDirectory() {
+            return materialized
+        }
+
+        let fileURL = URL(fileURLWithPath: filePath)
+        let repositoryRoot = fileURL
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let packageURL = repositoryRoot.appendingPathComponent(packageName, isDirectory: true)
+        let manifestURL = packageURL.appendingPathComponent("Package.swift", isDirectory: false)
+        guard FileManager.default.fileExists(atPath: manifestURL.path) else {
+            return nil
+        }
+        return packageURL.path
+    }
+
+    static func preferredMaterializedPackageDirectoryPath() -> String? {
+        let fileManager = FileManager.default
+        guard let baseDirectory = fileManager.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first else {
+            return nil
+        }
+
+        let bundleID = Bundle.main.bundleIdentifier ?? "GeoTeleportMacV3"
+        return baseDirectory
+            .appendingPathComponent(bundleID, isDirectory: true)
+            .appendingPathComponent("GeneratedArtifacts", isDirectory: true)
+            .appendingPathComponent(packageName, isDirectory: true)
+            .path
+    }
+
+    static func isMaterializedPackageDirectory(_ path: String) -> Bool {
+        guard let expectedPath = preferredMaterializedPackageDirectoryPath() else {
+            return false
+        }
+        return NSString(string: path).standardizingPath == NSString(string: expectedPath).standardizingPath
+    }
+
+    private static func materializedPackageDirectory() -> String? {
+        guard let packagePath = preferredMaterializedPackageDirectoryPath() else {
+            return nil
+        }
+
+        let fileManager = FileManager.default
+        let packageURL = URL(fileURLWithPath: packagePath, isDirectory: true)
+        let sourcesURL = packageURL
+            .appendingPathComponent("Sources", isDirectory: true)
+            .appendingPathComponent(packageName, isDirectory: true)
+        let testsURL = packageURL
+            .appendingPathComponent("Tests", isDirectory: true)
+            .appendingPathComponent("\(packageName)Tests", isDirectory: true)
+
+        do {
+            try fileManager.createDirectory(at: sourcesURL, withIntermediateDirectories: true)
+            try fileManager.createDirectory(at: testsURL, withIntermediateDirectories: true)
+            try writeIfNeeded(packageManifest, to: packageURL.appendingPathComponent("Package.swift", isDirectory: false))
+            try writeIfNeeded(librarySource, to: sourcesURL.appendingPathComponent("\(packageName).swift", isDirectory: false))
+            try writeIfNeeded(testSource, to: testsURL.appendingPathComponent("\(packageName)Tests.swift", isDirectory: false))
+            return packageURL.path
+        } catch {
+            return nil
+        }
+    }
+
+    private static func writeIfNeeded(_ contents: String, to url: URL) throws {
+        let data = Data(contents.utf8)
+        if let existing = try? Data(contentsOf: url), existing == data {
+            return
+        }
+        try data.write(to: url, options: .atomic)
+    }
+
+    private static let packageManifest = """
+    // swift-tools-version: 5.10
+    import PackageDescription
+
+    let package = Package(
+        name: "\(packageName)",
+        platforms: [
+            .iOS(.v16)
+        ],
+        products: [
+            .library(
+                name: "\(packageName)",
+                targets: ["\(packageName)"]
+            )
+        ],
+        targets: [
+            .target(
+                name: "\(packageName)"
+            ),
+            .testTarget(
+                name: "\(packageName)Tests",
+                dependencies: ["\(packageName)"]
+            )
+        ]
+    )
+    """
+
+    private static let librarySource = """
+    public enum \(packageName) {}
+    """
+
+    private static let testSource = """
+    import CoreLocation
+    import XCUIAutomation
+    import XCTest
+
+    final class \(packageName)Tests: XCTestCase {
+        func testApplyRequestedLocation() throws {
+            guard #available(iOS 16.4, *) else {
+                XCTFail("Xcode-backed location injection requires iOS 16.4 or later.")
+                return
+            }
+
+            let environment = ProcessInfo.processInfo.environment
+            guard let action = environment["GTM_ACTION"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !action.isEmpty else {
+                XCTFail("Missing GTM_ACTION for \(packageName) test invocation.")
+                return
+            }
+
+            switch action {
+            case "set":
+                guard let latitudeRaw = environment["GTM_LAT"],
+                      let longitudeRaw = environment["GTM_LON"],
+                      let latitude = Double(latitudeRaw),
+                      let longitude = Double(longitudeRaw) else {
+                    XCTFail("Invalid coordinates supplied through GTM_LAT / GTM_LON.")
+                    return
+                }
+                XCUIDevice.shared.location = XCUILocation(
+                    location: CLLocation(latitude: latitude, longitude: longitude)
+                )
+            case "clear":
+                XCUIDevice.shared.location = nil
+            default:
+                XCTFail("Unsupported GTM_ACTION: \\(action)")
+            }
+        }
+    }
+    """
+}
+
+private struct XcodeHarnessBuildSelfCheckResult {
+    let exitCode: Int32
+    let detail: String
+}
+
+private struct XcodeTestLocationInjectionTransportAdapter: InjectionTransportServing {
+    let transportID = "injection.transport.xcode-test-harness"
+    private let runner: ShellCommandRunner
+    private let resolveHarnessDirectory: () -> String?
+
+    init(
+        runner: ShellCommandRunner = ShellCommandRunner(),
+        resolveHarnessDirectory: @escaping () -> String? = { XcodeLocationHarnessPackage.packageDirectory() }
+    ) {
+        self.runner = runner
+        self.resolveHarnessDirectory = resolveHarnessDirectory
+    }
+
+    func probeTransport(
+        snapshot: DeviceSnapshot,
+        tunnelEndpointResult: DeviceAgentTunnelEndpointResult?
+    ) -> DeviceAgentInjectionTransportProbeResult {
+        guard snapshot.isConnected else {
+            return unavailableProbe(
+                summary: "Xcode test harness injection cannot start because no connected device session is available.",
+                nextAction: "Connect exactly one trusted iPhone before expecting direct Xcode-backed location injection."
+            )
+        }
+
+        guard let deviceIdentifier = normalizedDeviceIdentifier(from: snapshot) else {
+            return unavailableProbe(
+                summary: "Xcode test harness injection needs a resolved device identifier from xcdevice, but the current snapshot does not carry one yet.",
+                nextAction: "Refresh device metadata until xcdevice contributes a stable device identifier for the attached iPhone."
+            )
+        }
+
+        guard let harnessDirectory = resolveHarnessDirectory() else {
+            return unavailableProbe(
+                summary: "Xcode test harness injection is selected as the primary no-Python path, but the local harness package is missing.",
+                nextAction: "Allow the app to materialize the GeoTeleportLocationHarness package under Application Support, or restore the fallback source-tree copy for development."
+            )
+        }
+
+        let packageOriginSummary: String
+        let nextAction: String
+        if XcodeLocationHarnessPackage.isMaterializedPackageDirectory(harnessDirectory) {
+            packageOriginSummary = "The local harness package is materialized under Application Support at \(harnessDirectory)."
+            nextAction = "Run set/clear through that materialized Xcode location harness without rediscovering tunnel state or falling back to the compatibility CLI bridge."
+        } else {
+            packageOriginSummary = "The source-tree fallback harness package is available at \(harnessDirectory)."
+            nextAction = "Run set/clear through the fallback Xcode location harness while keeping the compatibility CLI bridge as a non-primary path."
+        }
+
+        return DeviceAgentInjectionTransportProbeResult(
+            transportID: transportID,
+            transportState: .xcodeTestHarness,
+            contract: DeviceAgentInjectionTransportContract(
+                contractID: "injection.transport.xcode-test-harness",
+                phase: .xcodeTestHarness,
+                summary: "Injection transport is ready to drive location simulation through an Xcode XCTest harness without relying on the compatibility CLI bridge.",
+                expectedInput: "Teleport request + resolved device identifier + materialized local Xcode harness package"
+            ),
+            sourceTunnelEndpointArtifactID: tunnelEndpointResult?.artifact.artifactID,
+            summary: "Xcode test harness is ready for device \(deviceIdentifier). \(packageOriginSummary) Direct injection no longer depends on rediscovering or holding the compatibility tunnel path.",
+            nextAction: nextAction,
+            confidence: "medium"
+        )
+    }
+
+    func setLocation(
+        _ request: TeleportRequest,
+        snapshot: DeviceSnapshot,
+        tunnelAssessment: DeviceAgentSessionAssessment?
+    ) -> DeviceAgentResponse {
+        guard snapshot.isConnected else {
+            return .failure(
+                DeviceAgentFailure(
+                    code: .invalidRequest,
+                    message: "No connected iPhone session is available for direct Xcode-backed location injection."
+                )
+            )
+        }
+        guard Double(request.latitude) != nil, Double(request.longitude) != nil else {
+            return .failure(
+                DeviceAgentFailure(
+                    code: .invalidRequest,
+                    message: "Invalid coordinates supplied to the Xcode test harness injection transport."
+                )
+            )
+        }
+        guard let invocation = makeSetLocationInvocation(request: request, snapshot: snapshot) else {
+            return .failure(
+                DeviceAgentFailure(
+                    code: .transportUnimplemented,
+                    message: "Xcode test harness injection could not build a runnable xcodebuild test invocation for the current device."
+                )
+            )
+        }
+
+        return runInvocation(
+            invocation,
+            successEvents: successEvents(
+                for: snapshot,
+                harnessDirectory: invocation.workingDirectory,
+                commandSummary: invocation.commandSummary,
+                operationSummary: "location set"
+            )
+        )
+    }
+
+    func clearLocation(
+        snapshot: DeviceSnapshot,
+        tunnelAssessment: DeviceAgentSessionAssessment?
+    ) -> DeviceAgentResponse {
+        guard snapshot.isConnected else {
+            return .failure(
+                DeviceAgentFailure(
+                    code: .invalidRequest,
+                    message: "No connected iPhone session is available for direct Xcode-backed location clear."
+                )
+            )
+        }
+        guard let invocation = makeClearLocationInvocation(snapshot: snapshot) else {
+            return .failure(
+                DeviceAgentFailure(
+                    code: .transportUnimplemented,
+                    message: "Xcode test harness injection could not build a runnable clear-location invocation for the current device."
+                )
+            )
+        }
+
+        return runInvocation(
+            invocation,
+            successEvents: successEvents(
+                for: snapshot,
+                harnessDirectory: invocation.workingDirectory,
+                commandSummary: invocation.commandSummary,
+                operationSummary: "location clear"
+            )
+        )
+    }
+
+    fileprivate func runHarnessBuildSelfCheck() -> XcodeHarnessBuildSelfCheckResult {
+        guard let harnessDirectory = resolveHarnessDirectory() else {
+            return XcodeHarnessBuildSelfCheckResult(
+                exitCode: 1,
+                detail: "GeoTeleportLocationHarness package directory is missing."
+            )
+        }
+
+        let arguments = [
+            "xcodebuild",
+            "-scheme", XcodeLocationHarnessPackage.packageName,
+            "-destination", "generic/platform=iOS",
+            "build-for-testing",
+            "CODE_SIGNING_ALLOWED=NO"
+        ]
+
+        switch runner.run(
+            "/usr/bin/xcrun",
+            args: arguments,
+            environment: ProcessInfo.processInfo.environment,
+            workingDirectory: harnessDirectory
+        ) {
+        case .failure(let error):
+            return XcodeHarnessBuildSelfCheckResult(
+                exitCode: 1,
+                detail: "Unable to launch xcodebuild: \(shellCommandErrorMessage(error))"
+            )
+        case .success(let result):
+            let combined = [result.stdout, result.stderr]
+                .filter { !$0.isEmpty }
+                .joined(separator: " ")
+            return XcodeHarnessBuildSelfCheckResult(
+                exitCode: result.exitCode,
+                detail: combined.isEmpty ? "exit=\(result.exitCode)" : combined
+            )
+        }
+    }
+
+    private func unavailableProbe(summary: String, nextAction: String) -> DeviceAgentInjectionTransportProbeResult {
+        DeviceAgentInjectionTransportProbeResult(
+            transportID: transportID,
+            transportState: .unavailable,
+            contract: DeviceAgentInjectionTransportContract(
+                contractID: "injection.transport.xcode-test-harness",
+                phase: .probeOnly,
+                summary: "Direct Xcode-backed injection is reserved for sessions with a resolved device identifier and a materialized local harness package.",
+                expectedInput: "Connected device snapshot with xcdevice identifier + materialized local Xcode harness package"
+            ),
+            sourceTunnelEndpointArtifactID: nil,
+            summary: summary,
+            nextAction: nextAction,
+            confidence: "medium"
+        )
+    }
+
+    private func makeSetLocationInvocation(
+        request: TeleportRequest,
+        snapshot: DeviceSnapshot
+    ) -> InjectionTransportCommandInvocation? {
+        guard let harnessDirectory = resolveHarnessDirectory(),
+              let deviceIdentifier = normalizedDeviceIdentifier(from: snapshot) else {
+            return nil
+        }
+
+        var environment = ProcessInfo.processInfo.environment
+        environment["GTM_ACTION"] = "set"
+        environment["GTM_LAT"] = request.latitude
+        environment["GTM_LON"] = request.longitude
+
+        return InjectionTransportCommandInvocation(
+            executable: "/usr/bin/xcrun",
+            arguments: [
+                "xcodebuild",
+                "test",
+                "-scheme", XcodeLocationHarnessPackage.packageName,
+                "-destination", "id=\(deviceIdentifier)",
+                "-only-testing:\(XcodeLocationHarnessPackage.testSelector)"
+            ],
+            environment: environment,
+            workingDirectory: harnessDirectory,
+            commandSummary: "xcodebuild test -scheme \(XcodeLocationHarnessPackage.packageName) -destination id=\(deviceIdentifier) -only-testing:\(XcodeLocationHarnessPackage.testSelector) [set \(request.latitude), \(request.longitude)]"
+        )
+    }
+
+    private func makeClearLocationInvocation(
+        snapshot: DeviceSnapshot
+    ) -> InjectionTransportCommandInvocation? {
+        guard let harnessDirectory = resolveHarnessDirectory(),
+              let deviceIdentifier = normalizedDeviceIdentifier(from: snapshot) else {
+            return nil
+        }
+
+        var environment = ProcessInfo.processInfo.environment
+        environment["GTM_ACTION"] = "clear"
+        environment.removeValue(forKey: "GTM_LAT")
+        environment.removeValue(forKey: "GTM_LON")
+
+        return InjectionTransportCommandInvocation(
+            executable: "/usr/bin/xcrun",
+            arguments: [
+                "xcodebuild",
+                "test",
+                "-scheme", XcodeLocationHarnessPackage.packageName,
+                "-destination", "id=\(deviceIdentifier)",
+                "-only-testing:\(XcodeLocationHarnessPackage.testSelector)"
+            ],
+            environment: environment,
+            workingDirectory: harnessDirectory,
+            commandSummary: "xcodebuild test -scheme \(XcodeLocationHarnessPackage.packageName) -destination id=\(deviceIdentifier) -only-testing:\(XcodeLocationHarnessPackage.testSelector) [clear]"
+        )
+    }
+
+    private func runInvocation(
+        _ invocation: InjectionTransportCommandInvocation,
+        successEvents: [DeviceAgentDiagnosticEvent]
+    ) -> DeviceAgentResponse {
+        switch runner.run(
+            invocation.executable,
+            args: invocation.arguments,
+            environment: invocation.environment,
+            workingDirectory: invocation.workingDirectory
+        ) {
+        case .failure(let error):
+            return .failure(
+                DeviceAgentFailure(
+                    code: .transportExecutionFailed,
+                    message: "Xcode test harness could not launch \(invocation.executable): \(shellCommandErrorMessage(error))."
+                )
+            )
+        case .success(let result):
+            guard result.exitCode == 0 else {
+                return .failure(classifyFailure(result: result, invocation: invocation))
+            }
+            return .success(
+                .teleportResult(
+                    DeviceAgentTeleportResult(
+                        response: TeleportResponse(
+                            stdout: result.stdout,
+                            stderr: result.stderr,
+                            exitCode: result.exitCode
+                        ),
+                        events: successEvents
+                    )
+                )
+            )
+        }
+    }
+
+    fileprivate func classifyFailure(
+        result: ShellCommandResult,
+        invocation: InjectionTransportCommandInvocation
+    ) -> DeviceAgentFailure {
+        let details = [result.stderr, result.stdout]
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        let normalized = details.lowercased()
+
+        let code: DeviceAgentErrorCode
+        let prefix: String
+        if normalized.contains("invalid coordinates")
+            || normalized.contains("gtm_lat")
+            || normalized.contains("gtm_lon")
+            || normalized.contains("missing gtm_action") {
+            code = .invalidRequest
+            prefix = "Xcode test harness rejected the requested location payload."
+        } else if normalized.contains("unable to find a destination matching")
+            || normalized.contains("failed to prepare device")
+            || normalized.contains("developer mode")
+            || normalized.contains("device is busy")
+            || normalized.contains("device not available")
+            || normalized.contains("no devices are available") {
+            code = .agentUnavailable
+            prefix = "Xcode test harness could not open the requested device session."
+        } else if normalized.contains("requires a development team")
+            || normalized.contains("no profiles for")
+            || normalized.contains("code signing")
+            || normalized.contains("failed to build module")
+            || normalized.contains("package.swift") {
+            code = .transportExecutionFailed
+            prefix = "Xcode test harness could not build or sign the local harness package."
+        } else {
+            code = .transportExecutionFailed
+            prefix = "Xcode test harness failed unexpectedly."
+        }
+
+        let detailSuffix = details.isEmpty ? "" : " Detail: \(details)"
+        return DeviceAgentFailure(
+            code: code,
+            message: "\(prefix) Exit code \(result.exitCode). Command: \(invocation.commandSummary).\(detailSuffix)"
+        )
+    }
+
+    private func normalizedDeviceIdentifier(from snapshot: DeviceSnapshot) -> String? {
+        guard let identifier = snapshot.deviceIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !identifier.isEmpty else {
+            return nil
+        }
+        return identifier
+    }
+
+    private func successEvents(
+        for snapshot: DeviceSnapshot,
+        harnessDirectory: String?,
+        commandSummary: String,
+        operationSummary: String
+    ) -> [DeviceAgentDiagnosticEvent] {
+        var events: [DeviceAgentDiagnosticEvent] = [
+            DeviceAgentDiagnosticEvent(
+                level: .info,
+                message: "Xcode test harness executed \(commandSummary)"
+            ),
+            DeviceAgentDiagnosticEvent(
+                level: .info,
+                message: "Direct device identifier input remained the only device-side routing input for \(operationSummary)."
+            )
+        ]
+
+        if let deviceIdentifier = normalizedDeviceIdentifier(from: snapshot) {
+            events.append(
+                DeviceAgentDiagnosticEvent(
+                    level: .info,
+                    message: "Resolved device identifier \(deviceIdentifier) was reused without any parallel tunnel rediscovery."
+                )
+            )
+        }
+
+        if let harnessDirectory {
+            let originSummary = XcodeLocationHarnessPackage.isMaterializedPackageDirectory(harnessDirectory)
+                ? "Materialized harness package"
+                : "Source-tree fallback harness package"
+            events.append(
+                DeviceAgentDiagnosticEvent(
+                    level: .info,
+                    message: "\(originSummary) at \(harnessDirectory) backed the Xcode transport."
+                )
+            )
+        }
+
+        return events
+    }
+
+    private func shellCommandErrorMessage(_ error: ShellCommandError) -> String {
+        switch error {
+        case .launchFailed(let message):
+            return message
+        }
+    }
+}
+
+private struct EndpointBackedInjectionTransportCommandAdapter: InjectionTransportServing {
+    let transportID = "injection.transport.endpoint-backed.command"
+    private let runner: ShellCommandRunner
+    private let resolveCLIPath: () -> String?
+
+    init(
+        runner: ShellCommandRunner = ShellCommandRunner(),
+        resolveCLIPath: @escaping () -> String? = { V3LegacyCLIPathResolver().resolvedCLIPath() }
+    ) {
+        self.runner = runner
+        self.resolveCLIPath = resolveCLIPath
+    }
+
+    func probeTransport(
+        snapshot: DeviceSnapshot,
+        tunnelEndpointResult: DeviceAgentTunnelEndpointResult?
+    ) -> DeviceAgentInjectionTransportProbeResult {
+        guard let tunnelEndpointResult,
+              tunnelEndpointResult.state == .verified else {
+            return DeviceAgentInjectionTransportProbeResult(
+                transportID: transportID,
+                transportState: .unavailable,
+                contract: DeviceAgentInjectionTransportContract(
+                    contractID: "injection.transport.endpoint-backed",
+                    phase: .probeOnly,
+                    summary: "Injection transport is reserved to consume a verified product-owned tunnel endpoint, but that endpoint is not verified yet.",
+                    expectedInput: "Verified tunnel endpoint artifact"
+                ),
+                sourceTunnelEndpointArtifactID: tunnelEndpointResult?.artifact.artifactID,
+                summary: "Injection transport cannot bootstrap yet because no verified product-owned tunnel endpoint artifact is available.",
+                nextAction: "Verify the product-owned tunnel endpoint first, then bind injection transport to that artifact instead of rediscovering tunnel state.",
+                confidence: "low"
+            )
+        }
+
+        guard let cliPath = resolveCLIPath(), !cliPath.isEmpty else {
+            let endpoint = "\(tunnelEndpointResult.artifact.host):\(tunnelEndpointResult.artifact.port)"
+            return DeviceAgentInjectionTransportProbeResult(
+                transportID: transportID,
+                transportState: .unavailable,
+                contract: DeviceAgentInjectionTransportContract(
+                    contractID: "injection.transport.endpoint-backed",
+                    phase: .probeOnly,
+                    summary: "Injection transport has a verified tunnel endpoint input, but no command adapter is available yet.",
+                    expectedInput: "Teleport request + verified tunnel endpoint artifact + command adapter"
+                ),
+                sourceTunnelEndpointArtifactID: tunnelEndpointResult.artifact.artifactID,
+                summary: "Verified tunnel endpoint \(endpoint) is available, but the endpoint-backed command adapter cannot start because the temporary CLI bridge was not found.",
+                nextAction: "Resolve the temporary CLI bridge or replace this endpoint-backed adapter with a native injection transport.",
+                confidence: "medium"
+            )
+        }
+
+        let endpoint = "\(tunnelEndpointResult.artifact.host):\(tunnelEndpointResult.artifact.port)"
+        return DeviceAgentInjectionTransportProbeResult(
+            transportID: transportID,
+            transportState: .endpointBackedCommand,
+            contract: DeviceAgentInjectionTransportContract(
+                contractID: "injection.transport.endpoint-backed",
+                phase: .endpointBackedCommand,
+                summary: "Injection transport now has the correct typed input boundary and a temporary command adapter for endpoint-backed execution.",
+                expectedInput: "Teleport request + verified tunnel endpoint artifact"
+            ),
+            sourceTunnelEndpointArtifactID: tunnelEndpointResult.artifact.artifactID,
+            summary: "Endpoint-backed injection command adapter is ready to consume verified tunnel endpoint \(endpoint) without rediscovering tunnel state in a parallel path.",
+            nextAction: "Run location injection through the endpoint-backed command adapter while planning a native replacement for the temporary CLI bridge at \(cliPath).",
+            confidence: "medium"
+        )
+    }
+
+    func setLocation(
+        _ request: TeleportRequest,
+        snapshot: DeviceSnapshot,
+        tunnelAssessment: DeviceAgentSessionAssessment?
+    ) -> DeviceAgentResponse {
+        guard snapshot.isConnected else {
+            return .failure(
+                DeviceAgentFailure(
+                    code: .invalidRequest,
+                    message: "No connected iPhone session is available for device-agent injection."
+                )
+            )
+        }
+        guard Double(request.latitude) != nil, Double(request.longitude) != nil else {
+            return .failure(
+                DeviceAgentFailure(
+                    code: .invalidRequest,
+                    message: "Invalid coordinates supplied to the device-agent injection transport."
+                )
+            )
+        }
+
+        let probeResult = probeTransport(
+            snapshot: snapshot,
+            tunnelEndpointResult: tunnelAssessment?.tunnelEndpointResult
+        )
+        switch probeResult.transportState {
+        case .unavailable:
+            return .failure(
+                DeviceAgentFailure(
+                    code: .transportUnimplemented,
+                    message: "\(probeResult.summary) \(probeResult.nextAction)"
+                )
+            )
+        case .endpointBackedStub:
+            return .failure(
+                DeviceAgentFailure(
+                    code: .transportUnimplemented,
+                    message: "Injection transport is still stuck on the older endpoint-backed stub path. \(probeResult.nextAction)"
+                )
+            )
+        case .xcodeTestHarness:
+            return .failure(
+                DeviceAgentFailure(
+                    code: .transportUnimplemented,
+                    message: "Xcode test harness transport was selected by the stack, so the endpoint-backed command adapter should not execute. \(probeResult.nextAction)"
+                )
+            )
+        case .endpointBackedCommand:
+            guard let invocation = makeSetLocationInvocation(
+                request: request,
+                tunnelEndpointResult: tunnelAssessment?.tunnelEndpointResult
+            ) else {
+                return .failure(
+                    DeviceAgentFailure(
+                        code: .transportUnimplemented,
+                        message: "Endpoint-backed injection command adapter could not build a command invocation from the current verified tunnel endpoint."
+                    )
+                )
+            }
+
+        switch runner.run(
+            invocation.executable,
+            args: invocation.arguments,
+            environment: invocation.environment,
+            workingDirectory: invocation.workingDirectory
+        ) {
+            case .failure(let error):
+                return .failure(
+                    DeviceAgentFailure(
+                        code: .transportExecutionFailed,
+                        message: "Endpoint-backed injection command could not launch \(invocation.executable): \(shellCommandErrorMessage(error))."
+                    )
+                )
+            case .success(let result):
+                guard result.exitCode == 0 else {
+                    return .failure(
+                        classifyCommandFailure(
+                            result: result,
+                            invocation: invocation
+                        )
+                    )
+                }
+
+                return .success(
+                    .teleportResult(
+                        DeviceAgentTeleportResult(
+                            response: TeleportResponse(
+                                stdout: result.stdout,
+                                stderr: result.stderr,
+                                exitCode: result.exitCode
+                            ),
+                            events: [
+                                DeviceAgentDiagnosticEvent(
+                                    level: .info,
+                                    message: "Injection transport executed \(invocation.commandSummary)"
+                                ),
+                                DeviceAgentDiagnosticEvent(
+                                    level: .info,
+                                    message: "Verified tunnel endpoint artifact \(probeResult.sourceTunnelEndpointArtifactID ?? "unknown") remained the only tunnel-side input."
+                                )
+                            ]
+                        )
+                    )
+                )
+            }
+        }
+    }
+
+    func clearLocation(
+        snapshot: DeviceSnapshot,
+        tunnelAssessment: DeviceAgentSessionAssessment?
+    ) -> DeviceAgentResponse {
+        guard snapshot.isConnected else {
+            return .failure(
+                DeviceAgentFailure(
+                    code: .invalidRequest,
+                    message: "No connected iPhone session is available for device-agent location clear."
+                )
+            )
+        }
+
+        let probeResult = probeTransport(
+            snapshot: snapshot,
+            tunnelEndpointResult: tunnelAssessment?.tunnelEndpointResult
+        )
+        switch probeResult.transportState {
+        case .unavailable:
+            return .failure(
+                DeviceAgentFailure(
+                    code: .transportUnimplemented,
+                    message: "\(probeResult.summary) \(probeResult.nextAction)"
+                )
+            )
+        case .endpointBackedStub:
+            return .failure(
+                DeviceAgentFailure(
+                    code: .transportUnimplemented,
+                    message: "Injection transport is still stuck on the older endpoint-backed stub path. \(probeResult.nextAction)"
+                )
+            )
+        case .xcodeTestHarness:
+            return .failure(
+                DeviceAgentFailure(
+                    code: .transportUnimplemented,
+                    message: "Xcode test harness transport was selected by the stack, so the endpoint-backed command adapter should not execute. \(probeResult.nextAction)"
+                )
+            )
+        case .endpointBackedCommand:
+            guard let invocation = makeClearLocationInvocation(
+                tunnelEndpointResult: tunnelAssessment?.tunnelEndpointResult
+            ) else {
+                return .failure(
+                    DeviceAgentFailure(
+                        code: .transportUnimplemented,
+                        message: "Endpoint-backed injection command adapter could not build a clear-location invocation from the current verified tunnel endpoint."
+                    )
+                )
+            }
+
+        switch runner.run(
+            invocation.executable,
+            args: invocation.arguments,
+            environment: invocation.environment,
+            workingDirectory: invocation.workingDirectory
+        ) {
+            case .failure(let error):
+                return .failure(
+                    DeviceAgentFailure(
+                        code: .transportExecutionFailed,
+                        message: "Endpoint-backed clear-location command could not launch \(invocation.executable): \(shellCommandErrorMessage(error))."
+                    )
+                )
+            case .success(let result):
+                guard result.exitCode == 0 else {
+                    return .failure(
+                        classifyCommandFailure(
+                            result: result,
+                            invocation: invocation
+                        )
+                    )
+                }
+
+                return .success(
+                    .teleportResult(
+                        DeviceAgentTeleportResult(
+                            response: TeleportResponse(
+                                stdout: result.stdout,
+                                stderr: result.stderr,
+                                exitCode: result.exitCode
+                            ),
+                            events: [
+                                DeviceAgentDiagnosticEvent(
+                                    level: .info,
+                                    message: "Injection transport executed \(invocation.commandSummary)"
+                                ),
+                                DeviceAgentDiagnosticEvent(
+                                    level: .info,
+                                    message: "Verified tunnel endpoint artifact \(probeResult.sourceTunnelEndpointArtifactID ?? "unknown") remained the only tunnel-side input while clearing location simulation."
+                                )
+                            ]
+                        )
+                    )
+                )
+            }
+        }
+    }
+
+    fileprivate func makeSetLocationInvocation(
+        request: TeleportRequest,
+        tunnelEndpointResult: DeviceAgentTunnelEndpointResult?
+    ) -> InjectionTransportCommandInvocation? {
+        guard let tunnelEndpointResult,
+              tunnelEndpointResult.state == .verified,
+              let cliPath = resolveCLIPath(),
+              !cliPath.isEmpty else {
+            return nil
+        }
+
+        let endpoint = tunnelEndpointResult.artifact
+        let arguments = [
+            "developer",
+            "dvt",
+            "simulate-location",
+            "set",
+            "--rsd",
+            endpoint.host,
+            String(endpoint.port),
+            "--",
+            request.latitude,
+            request.longitude
+        ]
+
+        var environment = ProcessInfo.processInfo.environment
+        environment["LANG"] = "en_US.UTF-8"
+        environment["PYTHONIOENCODING"] = "utf-8"
+        environment["PYTHONUNBUFFERED"] = "1"
+
+        return InjectionTransportCommandInvocation(
+            executable: cliPath,
+            arguments: arguments,
+            environment: environment,
+            workingDirectory: nil,
+            commandSummary: "pymobiledevice3 developer dvt simulate-location set --rsd \(endpoint.host) \(endpoint.port) -- \(request.latitude) \(request.longitude)"
+        )
+    }
+
+    fileprivate func makeClearLocationInvocation(
+        tunnelEndpointResult: DeviceAgentTunnelEndpointResult?
+    ) -> InjectionTransportCommandInvocation? {
+        guard let tunnelEndpointResult,
+              tunnelEndpointResult.state == .verified,
+              let cliPath = resolveCLIPath(),
+              !cliPath.isEmpty else {
+            return nil
+        }
+
+        let endpoint = tunnelEndpointResult.artifact
+        let arguments = [
+            "developer",
+            "dvt",
+            "simulate-location",
+            "clear",
+            "--rsd",
+            endpoint.host,
+            String(endpoint.port)
+        ]
+
+        var environment = ProcessInfo.processInfo.environment
+        environment["LANG"] = "en_US.UTF-8"
+        environment["PYTHONIOENCODING"] = "utf-8"
+        environment["PYTHONUNBUFFERED"] = "1"
+
+        return InjectionTransportCommandInvocation(
+            executable: cliPath,
+            arguments: arguments,
+            environment: environment,
+            workingDirectory: nil,
+            commandSummary: "pymobiledevice3 developer dvt simulate-location clear --rsd \(endpoint.host) \(endpoint.port)"
+        )
+    }
+
+    private func shellCommandErrorMessage(_ error: ShellCommandError) -> String {
+        switch error {
+        case .launchFailed(let message):
+            return message
+        }
+    }
+
+    fileprivate func classifyCommandFailure(
+        result: ShellCommandResult,
+        invocation: InjectionTransportCommandInvocation
+    ) -> DeviceAgentFailure {
+        let details = [result.stderr, result.stdout]
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        let normalized = details.lowercased()
+
+        let kind: InjectionTransportCommandFailureKind
+        let prefix: String
+
+        if normalized.contains("invalid coordinates")
+            || normalized.contains("latitude")
+            || normalized.contains("longitude")
+            || normalized.contains("no such value") {
+            kind = .invalidRequest
+            prefix = "Endpoint-backed injection command rejected the teleport request."
+        } else if normalized.contains("make sure you passed the --rsd option")
+            || normalized.contains("unable to connect to tunneld")
+            || normalized.contains("trying again over tunneld since rsd is required")
+            || normalized.contains("got an invalidserviceerror")
+            || normalized.contains("failed to start service")
+            || normalized.contains("device not found")
+            || normalized.contains("device is password protected")
+            || normalized.contains("developer mode is disabled") {
+            kind = .sessionUnavailable
+            prefix = "Endpoint-backed injection command could not open the required developer-session service over the verified tunnel endpoint."
+        } else if normalized.contains("no such option: --rsd")
+            || normalized.contains("no such command 'dvt'")
+            || normalized.contains("no such command 'simulate-location'")
+            || normalized.contains("unknown option") {
+            kind = .transportUnavailable
+            prefix = "Endpoint-backed injection command adapter is incompatible with the installed CLI bridge surface."
+        } else {
+            kind = .executionFailed
+            prefix = "Endpoint-backed injection command failed unexpectedly."
+        }
+
+        let detailSuffix = details.isEmpty ? "" : " Detail: \(details)"
+        switch kind {
+        case .invalidRequest:
+            return DeviceAgentFailure(
+                code: .invalidRequest,
+                message: "\(prefix)\(detailSuffix)"
+            )
+        case .sessionUnavailable:
+            return DeviceAgentFailure(
+                code: .agentUnavailable,
+                message: "\(prefix) Command: \(invocation.commandSummary).\(detailSuffix)"
+            )
+        case .transportUnavailable:
+            return DeviceAgentFailure(
+                code: .transportUnimplemented,
+                message: "\(prefix) Command: \(invocation.commandSummary).\(detailSuffix)"
+            )
+        case .executionFailed:
+            return DeviceAgentFailure(
+                code: .transportExecutionFailed,
+                message: "\(prefix) Exit code \(result.exitCode). Command: \(invocation.commandSummary).\(detailSuffix)"
+            )
+        }
+    }
+}
+
+private struct NullInjectionTransportService: InjectionTransportServing {
+    let transportID = "injection.transport.none"
+
+    func probeTransport(
+        snapshot: DeviceSnapshot,
+        tunnelEndpointResult: DeviceAgentTunnelEndpointResult?
+    ) -> DeviceAgentInjectionTransportProbeResult {
+        DeviceAgentInjectionTransportProbeResult(
+            transportID: transportID,
+            transportState: .unavailable,
+            contract: DeviceAgentInjectionTransportContract(
+                contractID: "injection.transport.none",
+                phase: .probeOnly,
+                summary: "No injection transport service has been registered.",
+                expectedInput: "Registered injection transport"
+            ),
+            sourceTunnelEndpointArtifactID: tunnelEndpointResult?.artifact.artifactID,
+            summary: "No injection transport service is active.",
+            nextAction: "Register at least one injection transport service before expecting device-agent location injection.",
+            confidence: "low"
+        )
+    }
+
+    func setLocation(
+        _ request: TeleportRequest,
+        snapshot: DeviceSnapshot,
+        tunnelAssessment: DeviceAgentSessionAssessment?
+    ) -> DeviceAgentResponse {
+        .failure(
+            DeviceAgentFailure(
+                code: .transportUnimplemented,
+                message: "No injection transport service is active."
+            )
+        )
+    }
+
+    func clearLocation(
+        snapshot: DeviceSnapshot,
+        tunnelAssessment: DeviceAgentSessionAssessment?
+    ) -> DeviceAgentResponse {
+        .failure(
+            DeviceAgentFailure(
+                code: .transportUnimplemented,
+                message: "No injection transport service is active."
+            )
+        )
+    }
 }
 
 protocol TunnelStateControlling {
@@ -590,6 +2064,19 @@ private enum ProductOwnedTunnelStateController {
         let protocolHint: DeviceAgentTunnelProtocolHint
         let endpointSummary: String
         let summary: String
+    }
+
+    private enum ExpectedRSDEndpointSourceKind: Int {
+        case disconnectedTunnel
+        case genericRSDArgument
+        case addressPortPair
+        case createdTunnel
+    }
+
+    private struct ExpectedRSDEndpointCandidate {
+        let endpoint: TunnelEndpointProbe
+        let lineIndex: Int
+        let sourceKind: ExpectedRSDEndpointSourceKind
     }
 
     private enum ExpectedRSDEndpointProbeResult {
@@ -673,9 +2160,19 @@ private enum ProductOwnedTunnelStateController {
                 lifecycleResult: lifecycleResult,
                 tunnelSession: pendingSession,
                 healthResult: nil,
+                endpointResult: nil,
                 events: events(for: snapshot)
             )
         case .starting:
+            let tunnelSession = DeviceAgentTunnelSession(
+                sessionID: "tunnel.session.product-owned.starting",
+                state: .productOwnedStarting,
+                ownershipSummary: "Product-owned tunnel session starting",
+                sourceMetadataSessionID: metadataSession?.sessionID,
+                summary: "The backend has started creating a product-owned tunnel session.",
+                nextAction: "Wait for the product-owned tunnel controller to report active or failed state."
+            )
+            let healthResult = currentStoredHealthResult(for: snapshot)
             return DeviceAgentTunnelControllerSnapshot(
                 tunnelState: .starting,
                 lifecycleResult: DeviceAgentTunnelLifecycleResult(
@@ -684,18 +2181,21 @@ private enum ProductOwnedTunnelStateController {
                     nextAction: "Keep the product-owned tunnel startup under backend control until the session becomes active or fails.",
                     confidence: "medium"
                 ),
-                tunnelSession: DeviceAgentTunnelSession(
-                    sessionID: "tunnel.session.product-owned.starting",
-                    state: .productOwnedStarting,
-                    ownershipSummary: "Product-owned tunnel session starting",
-                    sourceMetadataSessionID: metadataSession?.sessionID,
-                    summary: "The backend has started creating a product-owned tunnel session.",
-                    nextAction: "Wait for the product-owned tunnel controller to report active or failed state."
-                ),
-                healthResult: currentStoredHealthResult(for: snapshot),
+                tunnelSession: tunnelSession,
+                healthResult: healthResult,
+                endpointResult: currentStoredEndpointResult(for: snapshot, tunnelSession: tunnelSession, healthResult: healthResult),
                 events: events(for: snapshot)
             )
         case .active:
+            let tunnelSession = DeviceAgentTunnelSession(
+                sessionID: "tunnel.session.product-owned.active",
+                state: .productOwnedActive,
+                ownershipSummary: "Product-owned tunnel session",
+                sourceMetadataSessionID: metadataSession?.sessionID,
+                summary: "A product-owned tunnel session is active and has verified readiness, so it can be treated as backend state instead of a process-name observation.",
+                nextAction: "Keep the tunnel session healthy and separate from injection transport readiness."
+            )
+            let healthResult = currentStoredHealthResult(for: snapshot)
             return DeviceAgentTunnelControllerSnapshot(
                 tunnelState: .active,
                 lifecycleResult: DeviceAgentTunnelLifecycleResult(
@@ -704,18 +2204,21 @@ private enum ProductOwnedTunnelStateController {
                     nextAction: "Keep the product-owned tunnel healthy while injection transport remains separate.",
                     confidence: "high"
                 ),
-                tunnelSession: DeviceAgentTunnelSession(
-                    sessionID: "tunnel.session.product-owned.active",
-                    state: .productOwnedActive,
-                    ownershipSummary: "Product-owned tunnel session",
-                    sourceMetadataSessionID: metadataSession?.sessionID,
-                    summary: "A product-owned tunnel session is active and has verified readiness, so it can be treated as backend state instead of a process-name observation.",
-                    nextAction: "Keep the tunnel session healthy and separate from injection transport readiness."
-                ),
-                healthResult: currentStoredHealthResult(for: snapshot),
+                tunnelSession: tunnelSession,
+                healthResult: healthResult,
+                endpointResult: currentStoredEndpointResult(for: snapshot, tunnelSession: tunnelSession, healthResult: healthResult),
                 events: events(for: snapshot)
             )
         case .failed(let message):
+            let tunnelSession = DeviceAgentTunnelSession(
+                sessionID: "tunnel.session.product-owned.failed",
+                state: .productOwnedFailed,
+                ownershipSummary: "Product-owned tunnel session failed",
+                sourceMetadataSessionID: metadataSession?.sessionID,
+                summary: message,
+                nextAction: "Retry tunnel startup through the product-owned controller instead of falling back to an external process."
+            )
+            let healthResult = currentStoredHealthResult(for: snapshot)
             return DeviceAgentTunnelControllerSnapshot(
                 tunnelState: .failed,
                 lifecycleResult: DeviceAgentTunnelLifecycleResult(
@@ -724,15 +2227,9 @@ private enum ProductOwnedTunnelStateController {
                     nextAction: "Surface the failure as backend-owned tunnel state and offer a retry path from the controller.",
                     confidence: "medium"
                 ),
-                tunnelSession: DeviceAgentTunnelSession(
-                    sessionID: "tunnel.session.product-owned.failed",
-                    state: .productOwnedFailed,
-                    ownershipSummary: "Product-owned tunnel session failed",
-                    sourceMetadataSessionID: metadataSession?.sessionID,
-                    summary: message,
-                    nextAction: "Retry tunnel startup through the product-owned controller instead of falling back to an external process."
-                ),
-                healthResult: currentStoredHealthResult(for: snapshot),
+                tunnelSession: tunnelSession,
+                healthResult: healthResult,
+                endpointResult: currentStoredEndpointResult(for: snapshot, tunnelSession: tunnelSession, healthResult: healthResult),
                 events: events(for: snapshot)
             )
         }
@@ -792,6 +2289,21 @@ private enum ProductOwnedTunnelStateController {
         return makeHealthResult(from: healthProbeState(from: attempt))
     }
 
+    private static func currentStoredEndpointResult(
+        for snapshot: DeviceSnapshot,
+        tunnelSession: DeviceAgentTunnelSession?,
+        healthResult: DeviceAgentTunnelHealthResult?
+    ) -> DeviceAgentTunnelEndpointResult? {
+        guard let attempt = loadAttempt(forKey: attemptKey(for: snapshot)) else {
+            return nil
+        }
+        return makeTunnelEndpointResult(
+            from: attempt,
+            tunnelSession: tunnelSession,
+            healthResult: healthResult
+        )
+    }
+
     private static func makeHealthResult(
         from state: TunnelHealthProbeState
     ) -> DeviceAgentTunnelHealthResult {
@@ -827,6 +2339,50 @@ private enum ProductOwnedTunnelStateController {
                 nextAction: "Inspect the backend-managed tunnel failure and retry startup instead of trusting process presence alone.",
                 confidence: "medium"
             )
+        }
+    }
+
+    private static func makeTunnelEndpointResult(
+        from attempt: StoredAttempt,
+        tunnelSession: DeviceAgentTunnelSession?,
+        healthResult: DeviceAgentTunnelHealthResult?
+    ) -> DeviceAgentTunnelEndpointResult? {
+        let logText = attempt.logPath.flatMap(readLogExcerpt(at:))
+        guard let endpoint = expectedRSDEndpoint(in: logText) else {
+            return nil
+        }
+
+        let summaryEndpoint = "\(endpoint.host):\(endpoint.port)"
+        let artifact = DeviceAgentTunnelEndpointArtifact(
+            artifactID: "tunnel.endpoint.\(endpoint.host.replacingOccurrences(of: ":", with: "_")).\(endpoint.port)",
+            host: endpoint.host,
+            port: endpoint.port,
+            sourceTunnelSessionID: tunnelSession?.sessionID,
+            sourceHealthState: healthResult?.state,
+            sourceProtocolHint: healthResult?.protocolHint,
+            summary: "Product-owned tunnel endpoint candidate \(summaryEndpoint) is available as structured backend state."
+        )
+
+        let verification = probeExpectedRSDEndpoint(in: logText, timeout: 0.35)
+        switch verification {
+        case .verified:
+            return DeviceAgentTunnelEndpointResult(
+                state: .verified,
+                artifact: artifact,
+                summary: "Expected RSD endpoint \(summaryEndpoint) is protocol-verified and can become the future product-owned injection input boundary.",
+                nextAction: "Use verified tunnel endpoint \(summaryEndpoint) as the future injection transport input instead of rediscovering tunnel state in a parallel path.",
+                confidence: "high"
+            )
+        case .advertisedButUnverified:
+            return DeviceAgentTunnelEndpointResult(
+                state: .advertised,
+                artifact: artifact,
+                summary: "Expected RSD endpoint \(summaryEndpoint) has been advertised by the product-owned tunnel startup logs, but protocol verification is still pending.",
+                nextAction: "Keep the product-owned tunnel under backend control until expected endpoint \(summaryEndpoint) is verified before wiring injection transport to it.",
+                confidence: "medium"
+            )
+        case .notAdvertised:
+            return nil
         }
     }
 
@@ -977,7 +2533,7 @@ private enum ProductOwnedTunnelStateController {
         for snapshot: DeviceSnapshot
     ) -> Result<TunnelLaunch, TunnelLaunchFailure> {
         guard let cliPath = pathResolver.resolvedCLIPath(), !cliPath.isEmpty else {
-            return .failure(.message("Product-owned tunnel startup could not begin because pymobiledevice3 was not found."))
+            return .failure(.message("Product-owned tunnel startup could not begin because the temporary CLI bridge was not found."))
         }
 
         let identifier = sanitizedIdentifier(for: snapshot)
@@ -1232,41 +2788,105 @@ private enum ProductOwnedTunnelStateController {
 
     private static func expectedRSDEndpoint(in logText: String?) -> TunnelEndpointProbe? {
         guard let logText, !logText.isEmpty else { return nil }
+        return expectedRSDEndpointCandidates(in: logText)
+            .sorted {
+                if $0.lineIndex == $1.lineIndex {
+                    return $0.sourceKind.rawValue < $1.sourceKind.rawValue
+                }
+                return $0.lineIndex < $1.lineIndex
+            }
+            .last?
+            .endpoint
+    }
 
+    private static func expectedRSDEndpointCandidates(in logText: String) -> [ExpectedRSDEndpointCandidate] {
         let hostToken = #"(\[?[A-Za-z0-9:\.%-]+\]?)"#
         let rsdArgumentPattern = #"(?i)(?:--rsd|rsd)\s+"# + hostToken + #"\s+(\d{1,5})"#
-        if let match = firstRegexMatch(in: logText, pattern: rsdArgumentPattern, groups: 2),
-           let endpoint = makeExpectedRSDEndpoint(
-            host: match[0],
-            port: match[1],
-            rawListener: "advertised RSD endpoint from --rsd \(match[0]) \(match[1])"
-           ) {
-            return endpoint
-        }
-
         let bracketedEndpointPattern = #"(?i)rsd[^\n]*"# + hostToken + #":(\d{1,5})"#
-        if let match = firstRegexMatch(in: logText, pattern: bracketedEndpointPattern, groups: 2),
-           let endpoint = makeExpectedRSDEndpoint(
-            host: match[0],
-            port: match[1],
-            rawListener: "advertised RSD endpoint \(match[0]):\(match[1])"
-           ) {
-            return endpoint
+        let addressPattern = #"(?i)\brsd\s+(?:address|host)\s*[:=]\s*"# + hostToken
+        let portPattern = #"(?i)\brsd\s+port\s*[:=]\s*(\d{1,5})"#
+
+        let lines = logText.components(separatedBy: .newlines)
+        var candidates: [ExpectedRSDEndpointCandidate] = []
+        var latestAddress: (host: String, lineIndex: Int, rawLine: String)?
+        var latestPort: (port: String, lineIndex: Int, rawLine: String)?
+
+        for (lineIndex, rawLine) in lines.enumerated() {
+            let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !line.isEmpty else { continue }
+
+            let lowercase = line.lowercased()
+
+            if let match = firstRegexMatch(in: line, pattern: rsdArgumentPattern, groups: 2),
+               let endpoint = makeExpectedRSDEndpoint(
+                host: match[0],
+                port: match[1],
+                rawListener: "advertised RSD endpoint from \(line)"
+               ) {
+                let sourceKind: ExpectedRSDEndpointSourceKind
+                if lowercase.contains("created tunnel") {
+                    sourceKind = .createdTunnel
+                } else if lowercase.contains("disconnected from tunnel") {
+                    sourceKind = .disconnectedTunnel
+                } else {
+                    sourceKind = .genericRSDArgument
+                }
+                candidates.append(
+                    ExpectedRSDEndpointCandidate(
+                        endpoint: endpoint,
+                        lineIndex: lineIndex,
+                        sourceKind: sourceKind
+                    )
+                )
+            }
+
+            if !lowercase.contains("--rsd"),
+               let match = firstRegexMatch(in: line, pattern: bracketedEndpointPattern, groups: 2),
+               let endpoint = makeExpectedRSDEndpoint(
+                host: match[0],
+                port: match[1],
+                rawListener: "advertised RSD endpoint \(match[0]):\(match[1]) from \(line)"
+               ) {
+                candidates.append(
+                    ExpectedRSDEndpointCandidate(
+                        endpoint: endpoint,
+                        lineIndex: lineIndex,
+                        sourceKind: .genericRSDArgument
+                    )
+                )
+            }
+
+            if let address = firstRegexMatch(in: line, pattern: addressPattern, groups: 1)?.first {
+                latestAddress = (address, lineIndex, line)
+            }
+
+            if let port = firstRegexMatch(in: line, pattern: portPattern, groups: 1)?.first {
+                latestPort = (port, lineIndex, line)
+            }
+
+            if let address = latestAddress,
+               let port = latestPort,
+               abs(address.lineIndex - port.lineIndex) <= 3,
+               let endpoint = makeExpectedRSDEndpoint(
+                host: address.host,
+                port: port.port,
+                rawListener: "advertised RSD address from \(address.rawLine) / \(port.rawLine)"
+               ) {
+                candidates.append(
+                    ExpectedRSDEndpointCandidate(
+                        endpoint: endpoint,
+                        lineIndex: max(address.lineIndex, port.lineIndex),
+                        sourceKind: .addressPortPair
+                    )
+                )
+                latestAddress = nil
+                latestPort = nil
+            }
         }
 
-        let addressPattern = #"(?i)rsd[^\n]*(?:address|host)\s*[:=]\s*"# + hostToken
-        let portPattern = #"(?i)rsd[^\n]*port\s*[:=]\s*(\d{1,5})"#
-        if let address = firstRegexMatch(in: logText, pattern: addressPattern, groups: 1)?.first,
-           let port = firstRegexMatch(in: logText, pattern: portPattern, groups: 1)?.first,
-           let endpoint = makeExpectedRSDEndpoint(
-            host: address,
-            port: port,
-            rawListener: "advertised RSD address \(address) port \(port)"
-           ) {
-            return endpoint
+        return candidates.filter { $0.sourceKind != .disconnectedTunnel } + candidates.filter {
+            $0.sourceKind == .disconnectedTunnel
         }
-
-        return nil
     }
 
     private static func firstRegexMatch(
@@ -1308,11 +2928,74 @@ private enum ProductOwnedTunnelStateController {
     }
 
     private static func normalizeEndpointHost(_ host: String) -> String {
-        let trimmed = host.trimmingCharacters(in: CharacterSet(charactersIn: "[] \t\r\n,;"))
+        let trimmed = host
+            .trimmingCharacters(in: CharacterSet(charactersIn: "[]()\"' \t\r\n,;"))
+            .replacingOccurrences(of: "%25", with: "%")
         if trimmed == "*" {
             return "127.0.0.1"
         }
         return trimmed
+    }
+
+    static func runExpectedRSDEndpointSelfCheckReport() -> String {
+        struct Case {
+            let name: String
+            let logText: String
+            let expectedHost: String
+            let expectedPort: UInt16
+        }
+
+        let cases: [Case] = [
+            Case(
+                name: "created-tunnel-ipv6",
+                logText: "uvicorn.error[6253] INFO Started server process [6253]\n[tunnel] Created tunnel --rsd fd7b:e5b:6f53::1 64337\n",
+                expectedHost: "fd7b:e5b:6f53::1",
+                expectedPort: 64337
+            ),
+            Case(
+                name: "latest-created-tunnel-wins",
+                logText: "[task] Created tunnel --rsd fd7b:e5b:6f53::1 64337\n[task] Disconnected from tunnel --rsd fd7b:e5b:6f53::1 64337\n[task] Created tunnel --rsd fd7b:e5b:6f53::2 64338\n",
+                expectedHost: "fd7b:e5b:6f53::2",
+                expectedPort: 64338
+            ),
+            Case(
+                name: "rsd-address-port-pair",
+                logText: "Identifier: 00008110-001978382E53801E\nRSD Address: [fd7b:e5b:6f53::1]\nRSD Port: 64337\nUse the follow connection option:\n--rsd [fd7b:e5b:6f53::1] 64337\n",
+                expectedHost: "fd7b:e5b:6f53::1",
+                expectedPort: 64337
+            ),
+            Case(
+                name: "percent-encoded-scope-id",
+                logText: "[task] Created tunnel --rsd fe80::1234%25utun5 60123\n",
+                expectedHost: "fe80::1234%utun5",
+                expectedPort: 60123
+            )
+        ]
+
+        var lines: [String] = []
+        var failureCount = 0
+
+        for testCase in cases {
+            let actual = expectedRSDEndpoint(in: testCase.logText)
+            let passed = actual?.host == testCase.expectedHost && actual?.port == testCase.expectedPort
+            if passed {
+                lines.append("PASS \(testCase.name): \(testCase.expectedHost):\(testCase.expectedPort)")
+            } else {
+                failureCount += 1
+                let actualSummary = actual.map { "\($0.host):\($0.port)" } ?? "nil"
+                lines.append(
+                    "FAIL \(testCase.name): expected \(testCase.expectedHost):\(testCase.expectedPort), got \(actualSummary)"
+                )
+            }
+        }
+
+        if failureCount == 0 {
+            lines.append("Tunnel log parser self-check passed (\(cases.count) cases).")
+        } else {
+            lines.append("Tunnel log parser self-check failed (\(failureCount)/\(cases.count) cases).")
+        }
+
+        return lines.joined(separator: "\n") + "\n"
     }
 
     private static func verifyExpectedRSDEndpoint(
@@ -1507,8 +3190,8 @@ private enum ProductOwnedTunnelStateController {
         }
         return content
             .split(whereSeparator: \.isNewline)
-            .suffix(3)
-            .joined(separator: " ")
+            .suffix(40)
+            .joined(separator: "\n")
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
@@ -1580,6 +3263,7 @@ private enum LegacyObservedTunnelStateController {
                 ),
                 tunnelSession: nil,
                 healthResult: nil,
+                endpointResult: nil,
                 events: events(for: snapshot)
             )
         }
@@ -1601,6 +3285,7 @@ private enum LegacyObservedTunnelStateController {
                 nextAction: "Replace this external tunnel observation with product-owned tunnel session management."
             ),
             healthResult: nil,
+            endpointResult: nil,
             events: events(for: snapshot)
         )
     }
@@ -1618,7 +3303,7 @@ private enum LegacyObservedTunnelStateController {
         return [
             DeviceAgentDiagnosticEvent(
                 level: .info,
-                message: "No legacy tunnel process observed during no-Python probe"
+                message: "No legacy tunnel process observed during device-agent probe"
             )
         ]
     }
@@ -1648,6 +3333,8 @@ private struct DeviceAgentAssessmentFactory {
                 tunnelLifecycleResult: nil,
                 tunnelSession: nil,
                 tunnelHealthResult: nil,
+                tunnelEndpointResult: nil,
+                injectionTransportProbeResult: nil,
                 nextAction: "Keep the probe on attachment: connect one iPhone over USB, unlock it, and trust this Mac before probing deeper services.",
                 blockerCodes: [.noDevice],
                 blockers: ["No connected iPhone detected"],
@@ -1730,6 +3417,8 @@ private struct DeviceAgentAssessmentFactory {
             tunnelLifecycleResult: nil,
             tunnelSession: nil,
             tunnelHealthResult: nil,
+            tunnelEndpointResult: nil,
+            injectionTransportProbeResult: nil,
             nextAction: orderedNextAction,
             blockerCodes: blockerCodes,
             blockers: blockers,
@@ -1739,7 +3428,8 @@ private struct DeviceAgentAssessmentFactory {
 
     static func makeTunnelAssessment(
         for snapshot: DeviceSnapshot,
-        tunnelController: TunnelStateControlling
+        tunnelController: TunnelStateControlling,
+        injectionTransportService: InjectionTransportServing
     ) -> DeviceAgentSessionAssessment? {
         let metadataSession = inferredTypedMetadataSession(from: snapshot)
         let requirementResult = inferTunnelRequirement(from: snapshot, metadataSession: metadataSession)
@@ -1751,6 +3441,52 @@ private struct DeviceAgentAssessmentFactory {
         let lifecycleResult = controllerSnapshot.lifecycleResult
         let tunnelSession = controllerSnapshot.tunnelSession
         let tunnelHealthResult = controllerSnapshot.healthResult
+        let tunnelEndpointResult = controllerSnapshot.endpointResult
+        let injectionTransportProbeResult = injectionTransportService.probeTransport(
+            snapshot: snapshot,
+            tunnelEndpointResult: tunnelEndpointResult
+        )
+
+        if injectionTransportProbeResult.transportState == .xcodeTestHarness {
+            let tunnelRequirementResult = DeviceAgentTunnelRequirementResult(
+                state: .notRequired,
+                sourceMetadataSessionID: metadataSession?.sessionID,
+                summary: "The primary Xcode-backed injection path for this session does not require the compatibility tunnel transport.",
+                nextAction: "Keep the resolved device identifier stable and run location injection through the Xcode test harness.",
+                confidence: "medium"
+            )
+            let tunnelLifecycleResult = DeviceAgentTunnelLifecycleResult(
+                state: .noProductOwnedTunnel,
+                summary: "No product-owned tunnel lifecycle is required while the Xcode-backed injection harness is the active primary transport.",
+                nextAction: "Refresh device metadata and harness readiness instead of starting the compatibility tunnel path.",
+                confidence: "medium"
+            )
+            return DeviceAgentSessionAssessment(
+                readinessGate: .ready,
+                readinessSummary: "Direct Xcode-backed location injection is ready, so the primary transport no longer depends on Python or compatibility tunnel ownership for this session.",
+                refreshIntent: DeviceAgentRefreshIntent(
+                    scope: .deviceOnly,
+                    probeFocus: .deviceInfo
+                ),
+                recommendedProbeFocus: .deviceInfo,
+                deviceInfoReadiness: nil,
+                deviceInfoTransportState: nil,
+                deviceInfoTransportContract: nil,
+                deviceInfoTransportProbeResult: nil,
+                typedMetadataResult: nil,
+                typedMetadataSession: nil,
+                tunnelRequirementResult: tunnelRequirementResult,
+                tunnelLifecycleResult: tunnelLifecycleResult,
+                tunnelSession: nil,
+                tunnelHealthResult: nil,
+                tunnelEndpointResult: nil,
+                injectionTransportProbeResult: injectionTransportProbeResult,
+                nextAction: injectionTransportProbeResult.nextAction,
+                blockerCodes: [],
+                blockers: [],
+                confidence: injectionTransportProbeResult.confidence
+            )
+        }
 
         if requirementResult.state == .notRequired {
             return DeviceAgentSessionAssessment(
@@ -1771,6 +3507,8 @@ private struct DeviceAgentAssessmentFactory {
                 tunnelLifecycleResult: lifecycleResult,
                 tunnelSession: tunnelSession,
                 tunnelHealthResult: tunnelHealthResult,
+                tunnelEndpointResult: tunnelEndpointResult,
+                injectionTransportProbeResult: injectionTransportProbeResult,
                 nextAction: "Hold tunnel requirement as a typed decision and keep injection transport separate from tunnel lifecycle.",
                 blockerCodes: [],
                 blockers: [],
@@ -1806,6 +3544,8 @@ private struct DeviceAgentAssessmentFactory {
                 tunnelLifecycleResult: lifecycleResult,
                 tunnelSession: tunnelSession,
                 tunnelHealthResult: tunnelHealthResult,
+                tunnelEndpointResult: tunnelEndpointResult,
+                injectionTransportProbeResult: injectionTransportProbeResult,
                 nextAction: metadataSession?.state == .resolvedIdentity
                     ? "Use the resolved metadata session to hold the tunnel requirement as a typed decision, then replace legacy process-name observation with product-owned tunnel lifecycle state."
                     : "Replace process-name observation with product-owned tunnel session management before treating tunnel presence as readiness.",
@@ -1816,11 +3556,11 @@ private struct DeviceAgentAssessmentFactory {
                     ? [
                         "Tunnel is required for the current iOS session",
                         "Tunnel observation is legacy-derived",
-                        "Tunnel readiness is not yet verified by the no-Python backend"
+                        "Tunnel readiness is not yet verified by the device-agent backend"
                     ]
                     : [
                         "Tunnel observation is legacy-derived",
-                        "Tunnel readiness is not yet verified by the no-Python backend"
+                        "Tunnel readiness is not yet verified by the device-agent backend"
                     ],
                 confidence: "low"
             )
@@ -1845,6 +3585,8 @@ private struct DeviceAgentAssessmentFactory {
                 tunnelLifecycleResult: lifecycleResult,
                 tunnelSession: tunnelSession,
                 tunnelHealthResult: tunnelHealthResult,
+                tunnelEndpointResult: tunnelEndpointResult,
+                injectionTransportProbeResult: injectionTransportProbeResult,
                 nextAction: "Inspect the product-owned tunnel startup failure, then retry the owned tunnel session instead of relying on legacy tunnel observation.",
                 blockerCodes: [.tunnelFailed],
                 blockers: ["Product-owned tunnel startup failed for the current session"],
@@ -1872,6 +3614,8 @@ private struct DeviceAgentAssessmentFactory {
             tunnelLifecycleResult: lifecycleResult,
             tunnelSession: tunnelSession,
             tunnelHealthResult: tunnelHealthResult,
+            tunnelEndpointResult: tunnelEndpointResult,
+            injectionTransportProbeResult: injectionTransportProbeResult,
             nextAction: requirementResult.nextAction + " " + lifecycleResult.nextAction,
             blockerCodes: requirementResult.state == .required ? [.tunnelRequired] : [.tunnelUnknown],
             blockers: requirementResult.state == .required
@@ -1977,6 +3721,7 @@ private struct SystemUSBProbeResultAdapter {
                     connectionSummary: NoPythonDeviceSummary.connectionSummary(from: probe),
                     iosVersion: probe.iosVersion,
                     deviceName: probe.displayName,
+                    deviceIdentifier: probe.deviceIdentifier,
                     serialSuffix: probe.serialSuffix,
                     vendorID: probe.vendorID,
                     productID: probe.productID,

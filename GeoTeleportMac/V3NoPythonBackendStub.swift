@@ -5,7 +5,7 @@ struct NoPythonBackendStub: DeviceBackend {
     let capabilities = BackendCapabilities(
         canDiscoverDevices: true,
         canObserveTunnel: true,
-        canInjectLocation: false
+        canInjectLocation: true
     )
     private let agentClient: DeviceAgentClient
 
@@ -32,6 +32,7 @@ struct NoPythonBackendStub: DeviceBackend {
                 connectionSummary: failure.message.uppercased(),
                 iosVersion: nil,
                 deviceName: nil,
+                deviceIdentifier: nil,
                 serialSuffix: nil,
                 vendorID: nil,
                 productID: nil,
@@ -50,12 +51,45 @@ struct NoPythonBackendStub: DeviceBackend {
         }
     }
 
-    func setLocation(_ request: TeleportRequest) -> Result<TeleportResponse, BackendFailure> {
+    func setLocation(_ request: TeleportRequest) -> Result<LocationCommandExecution, BackendFailure> {
         switch agentClient.setLocation(request) {
         case .success(let result):
-            return .success(result.response)
+            return .success(
+                LocationCommandExecution(
+                    response: result.response,
+                    diagnosticLines: result.events.map(\.logLine)
+                )
+            )
         case .failure(let failure):
-            return .failure(.unavailable(failure.message))
+            switch failure.code {
+            case .invalidRequest:
+                return .failure(.invalidRequest(failure.message))
+            case .transportExecutionFailed:
+                return .failure(.executionFailed(failure.message))
+            case .agentUnavailable, .transportUnimplemented, .unsupportedOperation:
+                return .failure(.unavailable(failure.message))
+            }
+        }
+    }
+
+    func clearLocation() -> Result<LocationCommandExecution, BackendFailure> {
+        switch agentClient.clearLocation() {
+        case .success(let result):
+            return .success(
+                LocationCommandExecution(
+                    response: result.response,
+                    diagnosticLines: result.events.map(\.logLine)
+                )
+            )
+        case .failure(let failure):
+            switch failure.code {
+            case .invalidRequest:
+                return .failure(.invalidRequest(failure.message))
+            case .transportExecutionFailed:
+                return .failure(.executionFailed(failure.message))
+            case .agentUnavailable, .transportUnimplemented, .unsupportedOperation:
+                return .failure(.unavailable(failure.message))
+            }
         }
     }
 
@@ -131,6 +165,7 @@ struct NoPythonBackendStub: DeviceBackend {
                     connectionSummary: failure.message.uppercased(),
                     iosVersion: nil,
                     deviceName: nil,
+                    deviceIdentifier: nil,
                     serialSuffix: nil,
                     vendorID: nil,
                     productID: nil,
@@ -162,6 +197,8 @@ struct NoPythonBackendStub: DeviceBackend {
                     DeviceAgentDiagnosticEvent(level: .info, message: "Tunnel lifecycle: \($0.tunnelLifecycleResult?.summary ?? "None")"),
                     DeviceAgentDiagnosticEvent(level: .info, message: "Tunnel session: \($0.tunnelSession?.summary ?? "None")"),
                     DeviceAgentDiagnosticEvent(level: .info, message: "Tunnel health: \($0.tunnelHealthResult?.summary ?? "None")"),
+                    DeviceAgentDiagnosticEvent(level: .info, message: "Tunnel endpoint: \($0.tunnelEndpointResult?.summary ?? "None")"),
+                    DeviceAgentDiagnosticEvent(level: .info, message: "Injection transport: \($0.injectionTransportProbeResult?.summary ?? "None")"),
                     DeviceAgentDiagnosticEvent(level: .info, message: "Tunnel next action: \($0.nextAction)"),
                     DeviceAgentDiagnosticEvent(level: .info, message: "Tunnel confidence: \($0.confidence)")
                 ] + $0.blockers.map { blocker in

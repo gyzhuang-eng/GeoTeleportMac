@@ -96,6 +96,20 @@ struct V3ChildProcessDeviceAgentClient: DeviceAgentClient {
         }
     }
 
+    func clearLocation() -> Result<DeviceAgentTeleportResult, DeviceAgentFailure> {
+        switch send(.clearLocation) {
+        case .success(.teleportResult(let result)):
+            return .success(result)
+        case .success:
+            return .failure(DeviceAgentFailure(
+                code: .agentUnavailable,
+                message: "Agent returned the wrong payload for location clear."
+            ))
+        case .failure(let failure):
+            return .failure(failure)
+        }
+    }
+
     private func send(_ request: DeviceAgentRequest) -> Result<DeviceAgentSuccessPayload, DeviceAgentFailure> {
         guard let executablePath, !executablePath.isEmpty else {
             return fallbackSend(request, extraMessage: "Executable path unavailable for child-process agent.")
@@ -174,6 +188,8 @@ struct V3ChildProcessDeviceAgentClient: DeviceAgentClient {
             return fallback.fetchTunnelState(for: device).map(DeviceAgentSuccessPayload.tunnelState)
         case .setLocation(let request):
             return fallback.setLocation(request).map(DeviceAgentSuccessPayload.teleportResult)
+        case .clearLocation:
+            return fallback.clearLocation().map(DeviceAgentSuccessPayload.teleportResult)
         }
     }
 }

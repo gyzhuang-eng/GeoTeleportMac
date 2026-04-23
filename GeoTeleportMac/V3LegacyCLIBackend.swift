@@ -32,8 +32,12 @@ struct LegacyCLIBackend: DeviceBackend {
         deviceTransport.fetchTunnelState(for: device)
     }
 
-    func setLocation(_ request: TeleportRequest) -> Result<TeleportResponse, BackendFailure> {
+    func setLocation(_ request: TeleportRequest) -> Result<LocationCommandExecution, BackendFailure> {
         locationTransport.setLocation(request)
+    }
+
+    func clearLocation() -> Result<LocationCommandExecution, BackendFailure> {
+        locationTransport.clearLocation()
     }
 
     func resolvedCLIPath() -> String? {

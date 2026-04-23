@@ -14,19 +14,176 @@ enum AppStatus: Equatable {
 }
 
 struct ContentView: View {
+    private enum LocationActionKind {
+        case set
+        case clear
+
+        var recordAction: LocationCommandAction {
+            switch self {
+            case .set:
+                return .set
+            case .clear:
+                return .clear
+            }
+        }
+
+        var operationLabel: String {
+            switch self {
+            case .set:
+                return "location set"
+            case .clear:
+                return "location clear"
+            }
+        }
+
+        var needsValidCoordinates: Bool {
+            switch self {
+            case .set:
+                return true
+            case .clear:
+                return false
+            }
+        }
+
+        var backendRescanLog: String {
+            switch self {
+            case .set:
+                return "[USER] ENV not ready — triggering rescan first"
+            case .clear:
+                return "[USER] ENV not ready for location clear — triggering rescan first"
+            }
+        }
+
+        func tunnelAbortLog(deviceIOSVersion: String) -> String {
+            switch self {
+            case .set:
+                return "[USER] ❌ iOS \(deviceIOSVersion) requires tunnel startup — aborting"
+            case .clear:
+                return "[USER] ❌ iOS \(deviceIOSVersion) requires tunnel startup before location clear — aborting"
+            }
+        }
+
+        func tunnelAbortSubtitle(deviceIOSVersion: String) -> String {
+            switch self {
+            case .set:
+                return "Bring up the tunnel first, then retry the location command through the same session."
+            case .clear:
+                return "Start the tunnel first, then clear the simulated location through the same session."
+            }
+        }
+
+        var invalidCoordinatesLog: String {
+            "[USER] ❌ Coordinate validation failed — aborting"
+        }
+
+        var invalidCoordinatesFailure: AppStatus {
+            .failure("Invalid coordinates", "Fix LAT / LON before teleporting.")
+        }
+
+        var missingDeviceLog: String {
+            "[USER] ❌ No connected device available for location clear"
+        }
+
+        var missingDeviceFailure: AppStatus {
+            .failure("No device attached", "Attach and trust the iPhone before clearing simulated location.")
+        }
+
+        var workingStatus: AppStatus {
+            switch self {
+            case .set:
+                return .working("Teleporting…", nil)
+            case .clear:
+                return .working("Clearing location…", "Requesting real GPS restore")
+            }
+        }
+
+        func resolvedWorkingStatus(latitude: String, longitude: String) -> AppStatus {
+            switch self {
+            case .set:
+                return .working("Teleporting…", "\(latitude), \(longitude)")
+            case .clear:
+                return workingStatus
+            }
+        }
+
+        var actionLog: String {
+            switch self {
+            case .set:
+                return "[USER] 🖱️ ACTION: EXECUTE JUMP CLICKED"
+            case .clear:
+                return "[USER] 🧹 ACTION: CLEAR LOCATION CLICKED"
+            }
+        }
+
+        func kernelLogs(latitude: String, longitude: String) -> [String] {
+            switch self {
+            case .set:
+                return [
+                    "[KERNEL] 🛰️ TARGET LOCK ACQUIRED",
+                    "[DATA] 📡 LATITUDE:  \(latitude)",
+                    "[DATA] 📡 LONGITUDE: \(longitude)",
+                    "[KERNEL] ⚡️ INITIATING INJECTION SEQUENCE..."
+                ]
+            case .clear:
+                return ["[KERNEL] 📍 RESTORING REAL DEVICE LOCATION..."]
+            }
+        }
+
+        func legacyArguments(latitude: String, longitude: String) -> String {
+            switch self {
+            case .set:
+                return "developer simulate-location set -- \(latitude) \(longitude)"
+            case .clear:
+                return "developer simulate-location clear"
+            }
+        }
+
+        var previewSuccessLog: String {
+            switch self {
+            case .set:
+                return "[PREVIEW] Simulation success."
+            case .clear:
+                return "[PREVIEW] Clear-location simulation success."
+            }
+        }
+
+        func successTitle(latitude: String, longitude: String) -> String {
+            switch self {
+            case .set:
+                return "GPS moved"
+            case .clear:
+                return "GPS restored"
+            }
+        }
+
+        func successSubtitle(latitude: String, longitude: String) -> String? {
+            switch self {
+            case .set:
+                return "\(latitude), \(longitude)"
+            case .clear:
+                return "Real device location resumed"
+            }
+        }
+
+        var failureTitle: String {
+            switch self {
+            case .set:
+                return "Teleport failed"
+            case .clear:
+                return "Clear failed"
+            }
+        }
+    }
+
     @StateObject private var appModel = V3AppModel()
     @StateObject private var diagnostics = V3DiagnosticsStore()
     @StateObject private var statusStore = V3StatusStore()
-    @AppStorage("v3.backendTrack") private var backendTrackRaw: String = BackendTrack.legacyPreview.rawValue
+    @AppStorage("v3.backendTrack") private var backendTrackRaw: String = BackendTrack.primaryTrack.rawValue
     private let backendProvider = V3BackendProvider()
     private let tunnelLauncher = V3TunnelLauncher()
-    private var legacyBackend: LegacyCLIBackend { backendProvider.legacyPreviewBackend() }
     private var activeBackend: DeviceBackend { backendProvider.backend(for: activeBackendTrack) }
     private var runtimeCoordinator: V3RuntimeCoordinator {
         V3RuntimeCoordinator(backend: activeBackend)
-    }
-    private var legacyTeleportService: V3LegacyTeleportService {
-        V3LegacyTeleportService(backend: activeBackend)
     }
 
     // 坐标（持久化）
@@ -40,7 +197,11 @@ struct ContentView: View {
     @State private var tunneldHintDismissed: Bool = false
 
     private var activeBackendTrack: BackendTrack {
-        BackendTrack(rawValue: backendTrackRaw) ?? .legacyPreview
+        guard let track = BackendTrack(rawValue: backendTrackRaw),
+              BackendTrack.userSelectableCases.contains(track) else {
+            return BackendTrack.primaryTrack
+        }
+        return track
     }
 
     private var isDeviceConnected: Bool { appModel.isDeviceConnected }
@@ -60,14 +221,13 @@ struct ContentView: View {
         !tunneldHintDismissed
     }
 
-    // 组装 tunneld 命令：优先用已检测到的可执行文件绝对路径，避免多 Python
-    // 解释器环境下 `python3 -m pymobiledevice3` 找不到模块的问题
+    // 组装 tunnel 命令：优先用已检测到的兼容桥接器绝对路径，避免依赖 shell 默认解析。
     private var tunneldCommand: String {
         if !detectedCliPath.isEmpty {
             let cliPath = detectedCliPath
             return "sudo \(cliPath) remote tunneld"
         }
-        return "sudo python3 -m pymobiledevice3 remote tunneld"
+        return "sudo remote tunneld"
     }
 
     @State private var showDebugLog: Bool = false
@@ -94,6 +254,12 @@ struct ContentView: View {
         return v
     }
     private var coordsValid: Bool { latValue != nil && lonValue != nil }
+    private var canClearSimulatedLocation: Bool {
+        V3ViewPresentation.canClearLocation(
+            isWorking: isWorking,
+            appModel: appModel
+        )
+    }
 
     var body: some View {
         ZStack {
@@ -160,18 +326,24 @@ struct ContentView: View {
                         Text(V3ViewPresentation.environmentBadgeText(appModel: appModel))
                             .font(.system(size: 9, weight: .semibold, design: .monospaced))
                             .foregroundColor(.secondary)
-                        Menu {
-                            ForEach(BackendTrack.allCases, id: \.rawValue) { track in
-                                Button(track.displayName) {
-                                    switchBackend(to: track)
+                        if BackendTrack.userSelectableCases.count > 1 {
+                            Menu {
+                                ForEach(BackendTrack.userSelectableCases, id: \.rawValue) { track in
+                                    Button(track.displayName) {
+                                        switchBackend(to: track)
+                                    }
                                 }
+                            } label: {
+                                Text(activeBackendTrack.shortLabel)
+                                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                                    .foregroundColor(.secondary)
                             }
-                        } label: {
+                            .menuStyle(.borderlessButton)
+                        } else {
                             Text(activeBackendTrack.shortLabel)
                                 .font(.system(size: 9, weight: .semibold, design: .monospaced))
                                 .foregroundColor(.secondary)
                         }
-                        .menuStyle(.borderlessButton)
                         Button(action: manualRefresh) {
                             Image(systemName: isScanningDeps ? "hourglass" : "arrow.clockwise")
                                 .font(.system(size: 10, weight: .semibold))
@@ -187,7 +359,7 @@ struct ContentView: View {
                 .padding(.horizontal, 15)
                 .padding(.top, 12)
 
-                // 1b. iOS 17+ tunneld 提示横幅（tunneld 跑起来后自动收起）
+                // 1b. iOS 17+ tunnel 提示横幅（tunnel 跑起来后自动收起）
                 if showsLegacyTunnelBanner {
                     tunneldBanner
                         .padding(.horizontal, 15)
@@ -270,61 +442,91 @@ struct ContentView: View {
                 .padding(.horizontal, 15)
 
                 // 6. 执行按钮
-                Button(action: teleport) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .fill(
-                                LinearGradient(
-                                    colors: V3ViewPresentation.canTeleport(
-                                        isWorking: isWorking,
-                                        appModel: appModel,
-                                        coordsValid: coordsValid
+                HStack(spacing: 10) {
+                    Button(action: teleport) {
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .fill(
+                                    LinearGradient(
+                                        colors: V3ViewPresentation.canTeleport(
+                                            isWorking: isWorking,
+                                            appModel: appModel,
+                                            coordsValid: coordsValid
+                                        )
+                                            ? [Color.blue.opacity(0.95), Color.purple.opacity(0.95)]
+                                            : [Color.gray.opacity(0.55), Color.gray.opacity(0.35)],
+                                        startPoint: .leading, endPoint: .trailing
                                     )
-                                        ? [Color.blue.opacity(0.95), Color.purple.opacity(0.95)]
-                                        : [Color.gray.opacity(0.55), Color.gray.opacity(0.35)],
-                                    startPoint: .leading, endPoint: .trailing
                                 )
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    .strokeBorder(Color.white.opacity(0.18), lineWidth: 1)
-                            )
-                            .shadow(
-                                color: Color.blue.opacity(
-                                    V3ViewPresentation.canTeleport(
-                                        isWorking: isWorking,
-                                        appModel: appModel,
-                                        coordsValid: coordsValid
-                                    ) ? 0.35 : 0
-                                ),
-                                radius: 12,
-                                x: 0,
-                                y: 4
-                            )
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                        .strokeBorder(Color.white.opacity(0.18), lineWidth: 1)
+                                )
+                                .shadow(
+                                    color: Color.blue.opacity(
+                                        V3ViewPresentation.canTeleport(
+                                            isWorking: isWorking,
+                                            appModel: appModel,
+                                            coordsValid: coordsValid
+                                        ) ? 0.35 : 0
+                                    ),
+                                    radius: 12,
+                                    x: 0,
+                                    y: 4
+                                )
 
-                        HStack(spacing: 6) {
-                            if V3ViewPresentation.shouldShowButtonWarning(
-                                appModel: appModel,
-                                coordsValid: coordsValid
-                            ) {
-                                Image(systemName: "exclamationmark.triangle.fill").foregroundColor(.yellow)
+                            HStack(spacing: 6) {
+                                if V3ViewPresentation.shouldShowButtonWarning(
+                                    appModel: appModel,
+                                    coordsValid: coordsValid
+                                ) {
+                                    Image(systemName: "exclamationmark.triangle.fill").foregroundColor(.yellow)
+                                }
+                                Text(buttonTitle())
+                                    .font(.system(size: 13, weight: .bold, design: .monospaced))
+                                    .foregroundColor(.white)
                             }
-                            Text(buttonTitle())
-                                .font(.system(size: 13, weight: .bold, design: .monospaced))
-                                .foregroundColor(.white)
                         }
+                        .frame(height: 40)
                     }
-                    .frame(height: 40)
-                }
-                .buttonStyle(.plain)
-                .padding(.horizontal, 15)
-                .disabled(
-                    !V3ViewPresentation.canTeleport(
-                        isWorking: isWorking,
-                        appModel: appModel,
-                        coordsValid: coordsValid
+                    .buttonStyle(.plain)
+                    .disabled(
+                        !V3ViewPresentation.canTeleport(
+                            isWorking: isWorking,
+                            appModel: appModel,
+                            coordsValid: coordsValid
+                        )
                     )
-                )
+
+                    Button(action: clearSimulatedLocation) {
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .fill(
+                                    LinearGradient(
+                                        colors: canClearSimulatedLocation
+                                            ? [Color.orange.opacity(0.90), Color.red.opacity(0.82)]
+                                            : [Color.gray.opacity(0.50), Color.gray.opacity(0.32)],
+                                        startPoint: .leading, endPoint: .trailing
+                                    )
+                                )
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                        .strokeBorder(Color.white.opacity(0.18), lineWidth: 1)
+                                )
+                            HStack(spacing: 6) {
+                                Image(systemName: "location.slash.fill")
+                                    .foregroundColor(.white)
+                                Text(isWorking ? "WORKING..." : "CLEAR LOCATION")
+                                    .font(.system(size: 12, weight: .bold, design: .monospaced))
+                                    .foregroundColor(.white)
+                            }
+                        }
+                        .frame(width: 180, height: 40)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!canClearSimulatedLocation)
+                }
+                .padding(.horizontal, 15)
 
                 // 7. 状态卡（用户只看这一条）
                 statusCard
@@ -500,7 +702,7 @@ struct ContentView: View {
         }
     }
 
-    // iOS 17+ tunneld 提示横幅
+    // iOS 17+ tunnel 提示横幅
     private var tunneldBanner: some View {
         let cmd = tunneldCommand
         return HStack(alignment: .top, spacing: 10) {
@@ -509,10 +711,10 @@ struct ContentView: View {
                 .foregroundColor(.yellow)
                 .padding(.top, 2)
             VStack(alignment: .leading, spacing: 4) {
-                    Text("iOS \(deviceIOSVersion) detected — tunneld required")
+                    Text("iOS \(deviceIOSVersion) detected — tunnel required")
                         .font(.system(size: 11, weight: .bold, design: .monospaced))
                         .foregroundColor(.primary)
-                Text("This preview still uses the legacy tunnel flow. Start it once and keep the Terminal window open:")
+                Text("Compatibility mode still needs a manual tunnel handoff. Start it once and keep the terminal window open:")
                     .font(.system(size: 10))
                     .foregroundColor(.secondary)
                 HStack(spacing: 6) {
@@ -524,7 +726,7 @@ struct ContentView: View {
                         .truncationMode(.tail)
                     Button {
                         tunnelLauncher.copyToPasteboard(cmd)
-                        log("[HINT] Copied tunneld command to clipboard")
+                        log("[HINT] Copied tunnel command to clipboard")
                     } label: {
                         Image(systemName: "doc.on.doc")
                             .font(.system(size: 10))
@@ -544,7 +746,7 @@ struct ContentView: View {
                         .background(Capsule().fill(accentBlue.opacity(0.85)))
                     }
                     .buttonStyle(.plain)
-                    .help("Open Terminal and run the command")
+                    .help("Open the terminal and run the command")
                 }
                 .padding(.horizontal, 8).padding(.vertical, 5)
                 .background(
@@ -576,29 +778,29 @@ struct ContentView: View {
                         .strokeBorder(Color.yellow.opacity(0.45), lineWidth: 1)
                 )
         )
-    }
+     }
 
-    // 一键打开 Terminal 并运行 tunneld 命令（只差用户输 sudo 密码）
+    // 一键打开终端并运行 tunnel 命令（只差用户输 sudo 密码）
     private func launchTunneldInTerminal(cmd: String) {
         switch tunnelLauncher.launchInTerminal(command: cmd) {
         case .failed(let message):
             log("[TERMINAL] ❌ Failed to launch: \(message)")
-            setStatus(.failure("Couldn't open Terminal", "Run the command manually — it's copied to your clipboard."))
+            setStatus(.failure("Couldn't open tunnel terminal", "Run the command manually — it's copied to your clipboard."))
             tunnelLauncher.copyToPasteboard(cmd)
         case .launched:
-            log("[TERMINAL] ✅ Launched Terminal with tunneld command")
-            setStatus(.working("Waiting for tunneld…", "Enter your Mac password in the Terminal window that just opened."))
+            log("[TERMINAL] ✅ Launched terminal with tunnel command")
+            setStatus(.working("Waiting for tunnel…", "Enter your Mac password in the terminal window that just opened."))
 
-            // 12 秒看门狗：如果这期间 tunneld 始终没起来，很可能是 pymobiledevice3
-            // 自己在 Terminal 里崩了（典型：Click/Typer 不兼容抛 AttributeError）
+            // 12 秒看门狗：如果这期间 tunnel 始终没起来，很可能是兼容桥接器
+            // 自己在终端里崩了。
             DispatchQueue.main.asyncAfter(deadline: .now() + 12) {
                 if !self.tunneldRunning,
                    case .working(let title, _) = self.statusStore.status,
-                   title.lowercased().contains("tunneld") {
-                    self.log("[TERMINAL] ⚠️ 12s elapsed, tunneld still down — likely install issue")
+                   title.lowercased().contains("tunnel") {
+                    self.log("[TERMINAL] ⚠️ 12s elapsed, tunnel still down — likely transport issue")
                     self.setStatus(.failure(
-                        "Tunneld didn't start",
-                        "Check the Terminal window. If the legacy backend crashed, the tunnel session never came up."
+                        "Tunnel didn't start",
+                        "Check the terminal window. If the compatibility transport crashed, the tunnel session never came up."
                     ))
                 }
             }
@@ -728,7 +930,8 @@ struct ContentView: View {
             deviceProbeFocus: appModel.effectiveDeviceProbeFocus,
             availabilityAssessment: appModel.availabilityAssessment,
             deviceAssessment: appModel.deviceAssessment,
-            tunnelAssessment: appModel.tunnelAssessment
+            tunnelAssessment: appModel.tunnelAssessment,
+            lastLocationCommandRecord: appModel.lastLocationCommandRecord
         )
         for line in lines {
             log(line)
@@ -761,9 +964,9 @@ struct ContentView: View {
             self.log("[DEVICE] iOS \(version) detected")
             if major >= 17 {
                 if activeBackendTrack == .legacyPreview {
-                    self.log("[DEVICE] ⚠️ iOS 17+ requires tunneld — see banner")
+                    self.log("[DEVICE] ⚠️ iOS 17+ requires tunnel startup — see banner")
                 } else {
-                    self.log("[DEVICE] Tunnel requirement is now tracked through no-Python session state")
+                    self.log("[DEVICE] Tunnel requirement is now tracked through device-agent session state")
                 }
             }
         }
@@ -797,7 +1000,7 @@ struct ContentView: View {
                 self.log("[TUNNELD] ⚠️ Not running")
             }
             if running, case .working(let title, _) = self.statusStore.status,
-               title.lowercased().contains("tunneld") {
+               title.lowercased().contains("tunnel") {
                 self.setStatus(.idle)
             }
         }
@@ -976,67 +1179,230 @@ struct ContentView: View {
     }
 
     func teleport() {
+        startLocationAction(.set)
+    }
+
+    func clearSimulatedLocation() {
+        startLocationAction(.clear)
+    }
+
+    private func startLocationAction(_ action: LocationActionKind) {
         if !isEnvironmentReady {
-            log("[USER] ENV not ready — triggering rescan first")
+            log(action.backendRescanLog)
             findDependency()
             return
         }
         if needsTunneld {
-            log("[USER] ❌ iOS \(deviceIOSVersion) requires tunneld — aborting")
+            log(action.tunnelAbortLog(deviceIOSVersion: deviceIOSVersion))
             setStatus(.failure(
                 "iOS \(deviceIOSVersion) tunnel isn't running",
-                "The legacy backend would no-op here. Click Launch in the yellow banner first."
+                action.tunnelAbortSubtitle(deviceIOSVersion: deviceIOSVersion)
             ))
             tunneldHintDismissed = false
             return
         }
-        guard coordsValid else {
-            log("[USER] ❌ Coordinate validation failed — aborting")
-            setStatus(.failure("Invalid coordinates", "Fix LAT / LON before teleporting."))
-            return
+
+        if action.needsValidCoordinates {
+            guard coordsValid else {
+                log(action.invalidCoordinatesLog)
+                setStatus(action.invalidCoordinatesFailure)
+                return
+            }
+        } else {
+            guard isDeviceConnected else {
+                log(action.missingDeviceLog)
+                setStatus(action.missingDeviceFailure)
+                return
+            }
         }
-        setStatus(.working("Teleporting…", "\(latitude), \(longitude)"))
+
+        setStatus(action.resolvedWorkingStatus(latitude: latitude, longitude: longitude))
         log("------------------------------------------")
-        log("[USER] 🖱️ ACTION: EXECUTE JUMP CLICKED")
-        log("[KERNEL] 🛰️ TARGET LOCK ACQUIRED")
-        log("[DATA] 📡 LATITUDE:  \(latitude)")
-        log("[DATA] 📡 LONGITUDE: \(longitude)")
-        log("[KERNEL] ⚡️ INITIATING INJECTION SEQUENCE...")
-        executeTeleport()
+        log(action.actionLog)
+        for line in action.kernelLogs(latitude: latitude, longitude: longitude) {
+            log(line)
+        }
+
+        switch action {
+        case .set:
+            executeTeleport()
+        case .clear:
+            executeClearLocation()
+        }
     }
 
     func executeTeleport() {
-        guard !detectedCliPath.isEmpty else {
+        let backend = activeBackend
+        let request = TeleportRequest(latitude: latitude, longitude: longitude)
+        performLocationCommand(
+            action: .set,
+            backend: backend,
+            ) {
+            backend.setLocation(request)
+        }
+    }
+
+    func executeClearLocation() {
+        let backend = activeBackend
+        performLocationCommand(
+            action: .clear,
+            backend: backend,
+        ) {
+            backend.clearLocation()
+        }
+    }
+
+    private func performLocationCommand(
+        action: LocationActionKind,
+        backend: DeviceBackend,
+        command: @escaping () -> Result<LocationCommandExecution, BackendFailure>
+    ) {
+        if backend.track == .legacyPreview && detectedCliPath.isEmpty {
             log("[ERROR] Abort: CLI Path is empty.")
-            setStatus(.failure("Teleport failed", "pymobiledevice3 path missing."))
+            setStatus(.failure(action.failureTitle, "Compatibility transport helper missing."))
             return
         }
 
         isWorking = true
         DispatchQueue.global(qos: .userInitiated).async {
-            self.log("[SYS] Spawning Child Process...")
-            self.log("[SYS] Executable: \(self.detectedCliPath)")
-            self.log("[SYS] Arguments: developer simulate-location set -- \(self.latitude) \(self.longitude)")
+            self.log("[SYS] Spawning Child Process for \(action.operationLabel)...")
+
+            if !self.detectedCliPath.isEmpty {
+                self.log("[SYS] Executable: \(self.detectedCliPath)")
+                if backend.track == .legacyPreview {
+                    self.log("[SYS] Arguments: \(action.legacyArguments(latitude: self.latitude, longitude: self.longitude))")
+                    self.log("[SYS] ENV: LANG=en_US.UTF-8 set.")
+                }
+            } else {
+                self.log("[SYS] Executable path is managed by the active backend transport")
+            }
 
             if ProcessInfo.processInfo.environment["XCODE_RUNNING_FOR_PREVIEWS"] == "1" {
                 Thread.sleep(forTimeInterval: 0.5)
-                self.log("[PREVIEW] Simulation success.")
-                self.setStatus(.success("GPS moved", "\(self.latitude), \(self.longitude)"))
-                DispatchQueue.main.async { self.isWorking = false }
+                self.log(action.previewSuccessLog)
+                let successTitle = action.successTitle(latitude: self.latitude, longitude: self.longitude)
+                let successSubtitle = action.successSubtitle(latitude: self.latitude, longitude: self.longitude)
+                let record = LocationCommandRecord(
+                    action: action.recordAction,
+                    backendTrack: backend.track,
+                    outcome: .succeeded,
+                    summary: successTitle,
+                    detail: successSubtitle,
+                    exitCode: 0,
+                    stdout: nil,
+                    stderr: nil,
+                    diagnosticLines: []
+                )
+                self.setStatus(.success(successTitle, successSubtitle))
+                DispatchQueue.main.async {
+                    self.appModel.lastLocationCommandRecord = record
+                    self.logSessionDiagnostics()
+                    self.isWorking = false
+                }
                 return
             }
 
-            self.log("[SYS] ENV: LANG=en_US.UTF-8 set.")
-
-            let result = self.legacyTeleportService.execute(
-                request: TeleportRequest(latitude: self.latitude, longitude: self.longitude)
+            let result = command()
+            let execution = self.interpretLocationCommandResult(
+                action: action,
+                backendTrack: backend.track,
+                result,
+                successTitle: action.successTitle(latitude: self.latitude, longitude: self.longitude),
+                successSubtitle: action.successSubtitle(latitude: self.latitude, longitude: self.longitude)
             )
-            for line in result.logLines {
+            for line in execution.logLines {
                 self.log(line)
             }
-            self.setStatus(result.status)
+            DispatchQueue.main.async {
+                self.appModel.lastLocationCommandRecord = execution.record
+                self.logSessionDiagnostics()
+                self.isWorking = false
+            }
+            self.setStatus(execution.status)
             self.log("------------------------------------------")
-            DispatchQueue.main.async { self.isWorking = false }
+        }
+    }
+
+    private func interpretLocationCommandResult(
+        action: LocationActionKind,
+        backendTrack: BackendTrack,
+        _ result: Result<LocationCommandExecution, BackendFailure>,
+        successTitle: String,
+        successSubtitle: String?
+    ) -> (logLines: [String], status: AppStatus, record: LocationCommandRecord) {
+        switch result {
+        case .success(let execution):
+            let response = execution.response
+            var logLines: [String] = execution.diagnosticLines
+            logLines.append(response.stdout.isEmpty ? "[STDOUT] (Empty)" : "[STDOUT] >> \(response.stdout)")
+            logLines.append(response.stderr.isEmpty ? "[STDERR] (Empty)" : "[STDERR] >> \(response.stderr)")
+            logLines.append("[SYS] Process Exited. Code: \(response.exitCode)")
+
+            let stderrLowercased = response.stderr.lowercased()
+            let stderrLooksBad = stderrLowercased.contains("traceback")
+                || stderrLowercased.contains("error:")
+                || stderrLowercased.contains("failed")
+                || stderrLowercased.contains("exception")
+
+            if response.exitCode == 0 && !stderrLooksBad {
+                logLines.append("[RESULT] ✅ SUCCESS: Command completed.")
+                return (
+                    logLines,
+                    .success(successTitle, successSubtitle),
+                    LocationCommandRecord(
+                        action: action.recordAction,
+                        backendTrack: backendTrack,
+                        outcome: .succeeded,
+                        summary: successTitle,
+                        detail: successSubtitle,
+                        exitCode: response.exitCode,
+                        stdout: response.stdout.isEmpty ? nil : response.stdout,
+                        stderr: response.stderr.isEmpty ? nil : response.stderr,
+                        diagnosticLines: execution.diagnosticLines
+                    )
+                )
+            }
+
+            let reason = !response.stderr.isEmpty
+                ? response.stderr
+                : (!response.stdout.isEmpty ? response.stdout : "Process exited with code \(response.exitCode)")
+            logLines.append("[RESULT] ❌ FAILURE: Command returned a non-clean result.")
+            return (
+                logLines,
+                .failure(action.failureTitle, reason),
+                LocationCommandRecord(
+                    action: action.recordAction,
+                    backendTrack: backendTrack,
+                    outcome: .failed,
+                    summary: action.failureTitle,
+                    detail: reason,
+                    exitCode: response.exitCode,
+                    stdout: response.stdout.isEmpty ? nil : response.stdout,
+                    stderr: response.stderr.isEmpty ? nil : response.stderr,
+                    diagnosticLines: execution.diagnosticLines
+                )
+            )
+        case .failure(let failure):
+            let message: String
+            switch failure {
+            case .unavailable(let value), .invalidRequest(let value), .executionFailed(let value):
+                message = value
+            }
+            return (
+                ["[EXCEPTION] \(String(describing: failure))"],
+                .failure(action.failureTitle, message),
+                LocationCommandRecord(
+                    action: action.recordAction,
+                    backendTrack: backendTrack,
+                    outcome: .failed,
+                    summary: action.failureTitle,
+                    detail: message,
+                    exitCode: nil,
+                    stdout: nil,
+                    stderr: nil,
+                    diagnosticLines: []
+                )
+            )
         }
     }
 

@@ -14,7 +14,8 @@ struct V3SessionDiagnostics {
         deviceProbeFocus: DeviceProbeFocus,
         availabilityAssessment: DeviceAgentAvailability?,
         deviceAssessment: DeviceAgentSessionAssessment?,
-        tunnelAssessment: DeviceAgentSessionAssessment?
+        tunnelAssessment: DeviceAgentSessionAssessment?,
+        lastLocationCommandRecord: LocationCommandRecord?
     ) -> [String] {
         var lines: [String] = [
             "[SESSION] Track: \(backendTrack.shortLabel)",
@@ -146,6 +147,12 @@ struct V3SessionDiagnostics {
             if let tunnelHealth = assessment.tunnelHealthResult {
                 lines.append("[SESSION] Tunnel health: \(V3AppModel.summarizeTunnelHealthResult(tunnelHealth))")
             }
+            if let tunnelEndpoint = assessment.tunnelEndpointResult {
+                lines.append("[SESSION] Tunnel endpoint: \(V3AppModel.summarizeTunnelEndpointResult(tunnelEndpoint))")
+            }
+            if let injectionTransport = assessment.injectionTransportProbeResult {
+                lines.append("[SESSION] Injection transport: \(V3AppModel.summarizeInjectionTransportProbeResult(injectionTransport))")
+            }
             let blockerSummary = summarize(assessment.blockerCodes)
             if !blockerSummary.isEmpty {
                 lines.append("[SESSION] Tunnel blocker codes: \(blockerSummary)")
@@ -167,7 +174,20 @@ struct V3SessionDiagnostics {
         )
         if readinessGate == .injectionTransport {
             lines.append("[SESSION] Injection stage: \(V3AppModel.summarizeInjectionStage(availabilityAssessment: availabilityAssessment, tunnelAssessment: tunnelAssessment))")
-            lines.append("[SESSION] Injection guidance: \(V3AppModel.summarizeInjectionAction(availabilityAssessment: availabilityAssessment))")
+            lines.append("[SESSION] Injection guidance: \(V3AppModel.summarizeInjectionAction(availabilityAssessment: availabilityAssessment, tunnelAssessment: tunnelAssessment))")
+        }
+        if let record = lastLocationCommandRecord {
+            lines.append("[SESSION] Last location command: \(V3AppModel.summarizeLocationCommandRecord(record))")
+            if !record.diagnosticLines.isEmpty {
+                lines.append("[SESSION] Last location diagnostics:")
+                lines.append(contentsOf: record.diagnosticLines.map { "[SESSION]   \($0)" })
+            }
+            if let stdout = record.stdout, !stdout.isEmpty {
+                lines.append("[SESSION] Last location stdout: \(stdout)")
+            }
+            if let stderr = record.stderr, !stderr.isEmpty {
+                lines.append("[SESSION] Last location stderr: \(stderr)")
+            }
         }
         return lines
     }

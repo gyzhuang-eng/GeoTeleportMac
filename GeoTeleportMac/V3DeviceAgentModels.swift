@@ -3,6 +3,7 @@ import Foundation
 enum DeviceAgentErrorCode: String, Codable, Equatable {
     case agentUnavailable
     case transportUnimplemented
+    case transportExecutionFailed
     case unsupportedOperation
     case invalidRequest
 }
@@ -198,6 +199,60 @@ enum DeviceAgentTunnelHealthState: String, Codable, Equatable {
             return "Verified"
         case .failed:
             return "Failed"
+        }
+    }
+}
+
+enum DeviceAgentTunnelEndpointState: String, Codable, Equatable {
+    case advertised
+    case verified
+
+    var title: String {
+        switch self {
+        case .advertised:
+            return "Advertised"
+        case .verified:
+            return "Verified"
+        }
+    }
+}
+
+enum DeviceAgentInjectionTransportState: String, Codable, Equatable {
+    case unavailable
+    case endpointBackedStub
+    case endpointBackedCommand
+    case xcodeTestHarness
+
+    var title: String {
+        switch self {
+        case .unavailable:
+            return "Unavailable"
+        case .endpointBackedStub:
+            return "Endpoint-Backed Stub"
+        case .endpointBackedCommand:
+            return "Endpoint-Backed Command"
+        case .xcodeTestHarness:
+            return "Xcode Test Harness"
+        }
+    }
+}
+
+enum DeviceAgentInjectionTransportContractPhase: String, Codable, Equatable {
+    case probeOnly
+    case endpointBackedStub
+    case endpointBackedCommand
+    case xcodeTestHarness
+
+    var title: String {
+        switch self {
+        case .probeOnly:
+            return "Probe Only"
+        case .endpointBackedStub:
+            return "Endpoint-Backed Stub"
+        case .endpointBackedCommand:
+            return "Endpoint-Backed Command"
+        case .xcodeTestHarness:
+            return "Xcode Test Harness"
         }
     }
 }
@@ -403,6 +458,41 @@ struct DeviceAgentTunnelHealthResult: Codable, Equatable {
     let confidence: String
 }
 
+struct DeviceAgentTunnelEndpointArtifact: Codable, Equatable {
+    let artifactID: String
+    let host: String
+    let port: UInt16
+    let sourceTunnelSessionID: String?
+    let sourceHealthState: DeviceAgentTunnelHealthState?
+    let sourceProtocolHint: DeviceAgentTunnelProtocolHint?
+    let summary: String
+}
+
+struct DeviceAgentTunnelEndpointResult: Codable, Equatable {
+    let state: DeviceAgentTunnelEndpointState
+    let artifact: DeviceAgentTunnelEndpointArtifact
+    let summary: String
+    let nextAction: String
+    let confidence: String
+}
+
+struct DeviceAgentInjectionTransportContract: Codable, Equatable {
+    let contractID: String
+    let phase: DeviceAgentInjectionTransportContractPhase
+    let summary: String
+    let expectedInput: String
+}
+
+struct DeviceAgentInjectionTransportProbeResult: Codable, Equatable {
+    let transportID: String
+    let transportState: DeviceAgentInjectionTransportState
+    let contract: DeviceAgentInjectionTransportContract
+    let sourceTunnelEndpointArtifactID: String?
+    let summary: String
+    let nextAction: String
+    let confidence: String
+}
+
 struct DeviceAgentDeviceInfoTransportProbeResult: Codable, Equatable {
     let transportID: String
     let transportState: DeviceAgentDeviceInfoTransportState
@@ -428,6 +518,8 @@ struct DeviceAgentSessionAssessment: Codable, Equatable {
     let tunnelLifecycleResult: DeviceAgentTunnelLifecycleResult?
     let tunnelSession: DeviceAgentTunnelSession?
     let tunnelHealthResult: DeviceAgentTunnelHealthResult?
+    let tunnelEndpointResult: DeviceAgentTunnelEndpointResult?
+    let injectionTransportProbeResult: DeviceAgentInjectionTransportProbeResult?
     let nextAction: String
     let blockerCodes: [DeviceAgentAssessmentBlockerCode]
     let blockers: [String]

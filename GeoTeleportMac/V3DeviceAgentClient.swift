@@ -5,6 +5,7 @@ protocol DeviceAgentClient {
     func fetchConnectedDevice() -> Result<DeviceAgentDeviceState, DeviceAgentFailure>
     func fetchTunnelState(for device: DeviceSnapshot) -> Result<DeviceAgentTunnelState, DeviceAgentFailure>
     func setLocation(_ request: TeleportRequest) -> Result<DeviceAgentTeleportResult, DeviceAgentFailure>
+    func clearLocation() -> Result<DeviceAgentTeleportResult, DeviceAgentFailure>
 }
 
 struct LocalJSONDeviceAgentClient: DeviceAgentClient {
@@ -66,6 +67,20 @@ struct LocalJSONDeviceAgentClient: DeviceAgentClient {
             return .failure(DeviceAgentFailure(
                 code: .agentUnavailable,
                 message: "Agent returned the wrong payload for location injection."
+            ))
+        case .failure(let failure):
+            return .failure(failure)
+        }
+    }
+
+    func clearLocation() -> Result<DeviceAgentTeleportResult, DeviceAgentFailure> {
+        switch send(.clearLocation) {
+        case .success(.teleportResult(let result)):
+            return .success(result)
+        case .success:
+            return .failure(DeviceAgentFailure(
+                code: .agentUnavailable,
+                message: "Agent returned the wrong payload for location clear."
             ))
         case .failure(let failure):
             return .failure(failure)

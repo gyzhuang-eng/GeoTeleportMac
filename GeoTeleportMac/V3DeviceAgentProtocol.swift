@@ -5,6 +5,7 @@ enum DeviceAgentRequest: Codable, Equatable {
     case fetchConnectedDevice
     case fetchTunnelState(DeviceSnapshot)
     case setLocation(TeleportRequest)
+    case clearLocation
 
     private enum CodingKeys: String, CodingKey {
         case kind
@@ -17,6 +18,7 @@ enum DeviceAgentRequest: Codable, Equatable {
         case fetchConnectedDevice
         case fetchTunnelState
         case setLocation
+        case clearLocation
     }
 
     init(from decoder: Decoder) throws {
@@ -31,6 +33,8 @@ enum DeviceAgentRequest: Codable, Equatable {
             self = .fetchTunnelState(try container.decode(DeviceSnapshot.self, forKey: .deviceSnapshot))
         case .setLocation:
             self = .setLocation(try container.decode(TeleportRequest.self, forKey: .teleportRequest))
+        case .clearLocation:
+            self = .clearLocation
         }
     }
 
@@ -47,6 +51,8 @@ enum DeviceAgentRequest: Codable, Equatable {
         case .setLocation(let request):
             try container.encode(Kind.setLocation, forKey: .kind)
             try container.encode(request, forKey: .teleportRequest)
+        case .clearLocation:
+            try container.encode(Kind.clearLocation, forKey: .kind)
         }
     }
 }

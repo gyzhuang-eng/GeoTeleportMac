@@ -3,7 +3,7 @@ import Foundation
 
 @MainActor
 final class V3AppModel: ObservableObject {
-    @Published var backendTrack: BackendTrack = .legacyPreview
+    @Published var backendTrack: BackendTrack = BackendTrack.primaryTrack
     @Published var backendAvailability: BackendAvailability = .unavailable("Backend not initialized")
     @Published var backendCapabilities = BackendCapabilities(
         canDiscoverDevices: false,
@@ -16,6 +16,7 @@ final class V3AppModel: ObservableObject {
         connectionSummary: "INITIALIZING...",
         iosVersion: nil,
         deviceName: nil,
+        deviceIdentifier: nil,
         serialSuffix: nil,
         vendorID: nil,
         productID: nil,
@@ -26,9 +27,13 @@ final class V3AppModel: ObservableObject {
     @Published var availabilityAssessment: DeviceAgentAvailability?
     @Published var deviceAssessment: DeviceAgentSessionAssessment?
     @Published var tunnelAssessment: DeviceAgentSessionAssessment?
+    @Published var lastLocationCommandRecord: LocationCommandRecord?
 
     var isEnvironmentReady: Bool {
-        backendAvailability.isReady
+        if backendTrack == .noPythonStub {
+            return !backendAvailability.isUnavailable
+        }
+        return backendAvailability.isReady
     }
 
     var isBackendPartiallyAvailable: Bool {
@@ -242,6 +247,22 @@ final class V3AppModel: ObservableObject {
         return "Tunnel health: \(Self.summarizeTunnelHealthResult(health))"
     }
 
+    var tunnelEndpointSummary: String {
+        guard backendTrack == .noPythonStub,
+              let endpoint = tunnelAssessment?.tunnelEndpointResult else {
+            return ""
+        }
+        return "Tunnel endpoint: \(Self.summarizeTunnelEndpointResult(endpoint))"
+    }
+
+    var injectionTransportSummary: String {
+        guard backendTrack == .noPythonStub,
+              let probe = tunnelAssessment?.injectionTransportProbeResult else {
+            return ""
+        }
+        return "Injection transport: \(Self.summarizeInjectionTransportProbeResult(probe))"
+    }
+
     var deviceInfoStageSummary: String {
         guard backendTrack == .noPythonStub,
               readinessGate == .deviceInfoTransport,
@@ -317,22 +338,19 @@ final class V3AppModel: ObservableObject {
     var injectionStageSummary: String {
         guard backendTrack == .noPythonStub,
               readinessGate == .injectionTransport else { return "" }
-        if let tunnelSummary = tunnelAssessment?.readinessSummary, !tunnelSummary.isEmpty {
-            return "\(tunnelSummary) Injection transport is still not product-owned."
-        }
-        if let summary = availabilityAssessment?.summary, !summary.isEmpty {
-            return summary
-        }
-        return "A ready session boundary may exist, but product-owned injection transport is still missing."
+        return Self.summarizeInjectionStage(
+            availabilityAssessment: availabilityAssessment,
+            tunnelAssessment: tunnelAssessment
+        )
     }
 
     var injectionStageActionText: String {
         guard backendTrack == .noPythonStub,
               readinessGate == .injectionTransport else { return "" }
-        if let nextAction = availabilityAssessment?.nextAction, !nextAction.isEmpty {
-            return nextAction
-        }
-        return "Keep the ready session boundary separate from injection transport: do not treat tunnel-ready state as teleport-ready until product-owned injection transport exists."
+        return Self.summarizeInjectionAction(
+            availabilityAssessment: availabilityAssessment,
+            tunnelAssessment: tunnelAssessment
+        )
     }
 
     var tunnelIntentSummary: String {
@@ -352,6 +370,11 @@ final class V3AppModel: ObservableObject {
             return ""
         }
         return "Tunnel confidence: \(confidence.uppercased())"
+    }
+
+    var lastLocationCommandSummary: String {
+        guard let record = lastLocationCommandRecord else { return "" }
+        return "Last location command: \(Self.summarizeLocationCommandRecord(record))"
     }
 
     var hardwareStatusTitle: String {
@@ -401,7 +424,11 @@ final class V3AppModel: ObservableObject {
     }
 
     var needsTunnel: Bool {
-        deviceIOSMajor >= 17 && !tunneldRunning
+        if backendTrack == .noPythonStub,
+           tunnelAssessment?.injectionTransportProbeResult?.transportState == .xcodeTestHarness {
+            return false
+        }
+        return deviceIOSMajor >= 17 && !tunneldRunning
     }
 
     var preferredRefreshScope: SessionRefreshScope {
@@ -410,6 +437,10 @@ final class V3AppModel: ObservableObject {
                 tunnelAssessment?.refreshIntent?.scope ??
                 availabilityAssessment?.refreshIntent?.scope {
             return Self.mapRefreshScope(recommendedScope)
+        }
+        if backendTrack == .noPythonStub,
+           tunnelAssessment?.injectionTransportProbeResult?.transportState == .xcodeTestHarness {
+            return .deviceOnly
         }
         switch readinessGate {
         case .backendBootstrap:
@@ -484,7 +515,7 @@ final class V3AppModel: ObservableObject {
                 }
             }
         }
-        return "Rescan for pymobiledevice3"
+        return "Probe compatibility transport"
     }
 
     var preferredRefreshHelpText: String {
@@ -825,9 +856,9 @@ final class V3AppModel: ObservableObject {
             return "More than one USB-visible Apple mobile device is attached. Session selection is required."
         case .deviceInfoPending:
             if let typedMetadataSession = deviceAssessment?.typedMetadataSession {
-                return "A seed-only typed metadata session exists (\(typedMetadataSession.sessionID)), but the no-Python backend still needs resolved metadata transport before session readiness can advance."
+                return "A seed-only typed metadata session exists (\(typedMetadataSession.sessionID)), but the device-agent backend still needs resolved metadata transport before session readiness can advance."
             }
-            return "USB visibility exists, but the no-Python backend still needs device-info transport before it can resolve session readiness."
+            return "USB visibility exists, but the device-agent backend still needs device-info transport before it can resolve session readiness."
         case .tunnelObservationOnly:
             if let typedMetadataSession = deviceAssessment?.typedMetadataSession,
                typedMetadataSession.state == .resolvedIdentity {
@@ -841,7 +872,10 @@ final class V3AppModel: ObservableObject {
             }
             return "The device session is visible, but tunnel setup is still required."
         case .injectionUnavailable:
-            return "A ready session boundary may exist, but location injection transport has not been attached to the no-Python backend yet."
+            if let summary = summarizeEndpointBackedInjectionReadiness(tunnelAssessment: tunnelAssessment) {
+                return summary
+            }
+            return "A ready session boundary may exist, but location injection transport is not yet ready to execute."
         case .readyForInjection:
             return "Device session is healthy and ready for injection."
         case .degraded(let reason):
@@ -863,13 +897,19 @@ final class V3AppModel: ObservableObject {
             if let readinessGate {
                 switch readinessGate {
                 case .injectionTransport:
-                    return "Keep the ready session boundary separate from injection transport: do not treat tunnel-ready state as teleport-ready until product-owned injection transport exists."
+                    return summarizeInjectionAction(
+                        availabilityAssessment: availabilityAssessment,
+                        tunnelAssessment: tunnelAssessment
+                    )
                 case .tunnelOwnership:
                     if let nextAction = tunnelAssessment?.nextAction, !nextAction.isEmpty {
                         return nextAction
                     }
                     return "Keep the probe on tunnel ownership: verify that the current tunnel state is product-owned and reproducible before promoting it to a ready session boundary."
                 case .ready:
+                    if let action = summarizeEndpointBackedInjectionAction(tunnelAssessment: tunnelAssessment) {
+                        return action
+                    }
                     if let nextAction = tunnelAssessment?.nextAction, !nextAction.isEmpty {
                         return nextAction
                     }
@@ -926,31 +966,31 @@ final class V3AppModel: ObservableObject {
         if backendTrack == .noPythonStub {
             switch health {
             case .offline:
-                return "No-Python runtime is not holding a usable device session yet."
+                return "Device-agent runtime is not holding a usable device session yet."
             case .partial:
                 if let blocker = tunnelAssessment?.blockerCodes.first?.rawValue ??
                     deviceAssessment?.blockerCodes.first?.rawValue ??
                     availabilityAssessment?.blockerCodes.first?.rawValue,
                    !blocker.isEmpty {
-                    return "No-Python runtime is partially wired: \(blocker)."
+                    return "Device-agent runtime is partially wired: \(blocker)."
                 }
-                return "No-Python runtime has partial session data, but key transport layers are still missing."
+                return "Device-agent runtime has partial session data, but key transport layers are still missing."
             case .unstable:
                 if let blocker = ([deviceAssessment, tunnelAssessment]
                     .compactMap { $0?.blockers.first }).first,
                    !blocker.isEmpty {
                     return blocker
                 }
-                return "No-Python runtime sees conflicting or unverified session signals."
+                return "Device-agent runtime sees conflicting or unverified session signals."
             case .degraded:
                 if let blocker = ([tunnelAssessment, deviceAssessment]
                     .flatMap { $0?.blockerCodes ?? [] })
                     .first(where: { $0 == .tunnelFailed }) {
-                    return "No-Python runtime reached a degraded session path: \(blocker.rawValue)."
+                    return "Device-agent runtime reached a degraded session path: \(blocker.rawValue)."
                 }
-                return "No-Python runtime reached a degraded session path."
+                return "Device-agent runtime reached a degraded session path."
             case .healthy:
-                return "No-Python runtime session model reports a healthy path."
+                return "Device-agent runtime session model reports a healthy path."
             }
         }
 
@@ -1102,7 +1142,7 @@ final class V3AppModel: ObservableObject {
         switch gate {
         case .backendBootstrap:
             return backendTrack == .noPythonStub
-                ? "The no-Python backend boundary is up, but core session services are still bootstrapping."
+                ? "The device-agent backend boundary is up, but core session services are still bootstrapping."
                 : "The preview backend is not fully initialized."
         case .deviceAttachment:
             return "A trusted USB-attached iPhone is still required before session work can continue."
@@ -1235,6 +1275,23 @@ final class V3AppModel: ObservableObject {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    nonisolated static func summarizeTunnelEndpointResult(
+        _ result: DeviceAgentTunnelEndpointResult
+    ) -> String {
+        "\(result.state.rawValue): \(result.summary) Artifact: \(result.artifact.host):\(result.artifact.port). Next action: \(result.nextAction) Confidence: \(result.confidence.uppercased())."
+    }
+
+    nonisolated static func summarizeInjectionTransportProbeResult(
+        _ result: DeviceAgentInjectionTransportProbeResult
+    ) -> String {
+        switch result.transportState {
+        case .xcodeTestHarness:
+            return "\(result.transportState.rawValue): \(result.summary) Input: \(result.contract.expectedInput). Next action: \(result.nextAction) Confidence: \(result.confidence.uppercased())."
+        case .unavailable, .endpointBackedStub, .endpointBackedCommand:
+            return "\(result.transportState.rawValue): \(result.summary) Contract: \(result.contract.contractID). Next action: \(result.nextAction) Confidence: \(result.confidence.uppercased())."
+        }
+    }
+
     nonisolated static func summarizeTunnelProtocolHint(
         _ hint: DeviceAgentTunnelProtocolHint
     ) -> String {
@@ -1265,9 +1322,46 @@ final class V3AppModel: ObservableObject {
         case .tunnelOwnership:
             return "Tunnel ownership is still being verified. The session is not yet product-owned."
         case .ready:
+            if let summary = summarizeEndpointBackedInjectionReadiness(tunnelAssessment: tunnelAssessment) {
+                return summary
+            }
             return "Tunnel ownership is stable enough to hold a ready session boundary, but injection transport is still separate work."
         case .backendBootstrap, .deviceAttachment, .deviceSelection, .deviceInfoTransport, .injectionTransport:
             return "Tunnel probing is active, but the session has not settled into a tunnel-specific readiness boundary yet."
+        }
+    }
+
+    nonisolated static func summarizeEndpointBackedInjectionReadiness(
+        tunnelAssessment: DeviceAgentSessionAssessment?
+    ) -> String? {
+        guard let probe = tunnelAssessment?.injectionTransportProbeResult else {
+            return nil
+        }
+        switch probe.transportState {
+        case .xcodeTestHarness:
+            return "Direct Xcode-backed location injection is ready, so the primary transport no longer depends on Python or the compatibility tunnel path for this session."
+        case .endpointBackedCommand:
+            guard let endpoint = tunnelAssessment?.tunnelEndpointResult else { return nil }
+            return "Verified tunnel endpoint \(endpoint.artifact.host):\(endpoint.artifact.port) is now product-owned state, and the endpoint-backed injection command adapter is ready to execute against it without rediscovering tunnel state."
+        case .unavailable, .endpointBackedStub:
+            return nil
+        }
+    }
+
+    nonisolated static func summarizeEndpointBackedInjectionAction(
+        tunnelAssessment: DeviceAgentSessionAssessment?
+    ) -> String? {
+        guard let probe = tunnelAssessment?.injectionTransportProbeResult else {
+            return nil
+        }
+        switch probe.transportState {
+        case .xcodeTestHarness:
+            return "Run set/clear through the Xcode test harness using the resolved device identifier, without rediscovering tunnel state or depending on the compatibility CLI bridge."
+        case .endpointBackedCommand:
+            guard let endpoint = tunnelAssessment?.tunnelEndpointResult else { return nil }
+            return "Run set/clear through the endpoint-backed command adapter using verified tunnel endpoint \(endpoint.artifact.host):\(endpoint.artifact.port), while keeping the tunnel artifact as the only tunnel-side input."
+        case .unavailable, .endpointBackedStub:
+            return nil
         }
     }
 
@@ -1275,22 +1369,29 @@ final class V3AppModel: ObservableObject {
         availabilityAssessment: DeviceAgentAvailability? = nil,
         tunnelAssessment: DeviceAgentSessionAssessment? = nil
     ) -> String {
+        if let summary = summarizeEndpointBackedInjectionReadiness(tunnelAssessment: tunnelAssessment) {
+            return summary
+        }
         if let tunnelSummary = tunnelAssessment?.readinessSummary, !tunnelSummary.isEmpty {
-            return "\(tunnelSummary) Injection transport is still not product-owned."
+            return "\(tunnelSummary) Injection transport is not yet ready to execute."
         }
         if let summary = availabilityAssessment?.summary, !summary.isEmpty {
             return summary
         }
-        return "A ready session boundary may exist, but product-owned injection transport is still missing."
+        return "A ready session boundary may exist, but location injection transport is not yet ready to execute."
     }
 
     nonisolated static func summarizeInjectionAction(
-        availabilityAssessment: DeviceAgentAvailability? = nil
+        availabilityAssessment: DeviceAgentAvailability? = nil,
+        tunnelAssessment: DeviceAgentSessionAssessment? = nil
     ) -> String {
+        if let action = summarizeEndpointBackedInjectionAction(tunnelAssessment: tunnelAssessment) {
+            return action
+        }
         if let nextAction = availabilityAssessment?.nextAction, !nextAction.isEmpty {
             return nextAction
         }
-        return "Keep the ready session boundary separate from injection transport: do not treat tunnel-ready state as teleport-ready until product-owned injection transport exists."
+        return "Keep the verified tunnel endpoint as the only tunnel-side input, and do not rediscover tunnel state in a parallel injection path."
     }
 
     nonisolated static func summarizeTunnelAction(
@@ -1403,9 +1504,9 @@ final class V3AppModel: ObservableObject {
         case .tunnelFailed:
             return "Product-owned tunnel startup failed"
         case .injectionMissing:
-            return "Location injection feature still missing"
+            return "Location injection transport unavailable"
         case .injectionTransportMissing:
-            return "Injection transport still missing"
+            return "Injection transport gate still blocked"
         case .degraded(let reason):
             return reason
         case .none:
@@ -1447,7 +1548,7 @@ final class V3AppModel: ObservableObject {
             }
             return "Implement device-info transport so the backend can move past USB-only visibility."
         case .injectionTransportMissing:
-            return "Keep the ready session boundary separate from injection transport and wire a product-owned injection layer before treating the backend as teleport-ready."
+            return "Keep the verified tunnel endpoint as the only tunnel-side input and finish wiring the injection layer before treating the backend as fully teleport-ready."
         case .tunnelUnknown:
             if let typedMetadataSession = deviceAssessment?.typedMetadataSession,
                typedMetadataSession.state == .resolvedIdentity {
@@ -1455,7 +1556,7 @@ final class V3AppModel: ObservableObject {
             }
             return "Add iOS version and transport state discovery before deciding whether tunnel setup is required."
         case .legacyTunnelObserved:
-            return "A legacy tunnel process was observed, but the no-Python backend should not trust process presence as readiness."
+            return "A legacy tunnel process was observed, but the device-agent backend should not trust process presence as readiness."
         case .tunnelUnverified:
             return "Verify tunnel lifecycle through product-owned transport state before treating tunnel presence as ready."
         case .tunnelRequired:
@@ -1463,12 +1564,33 @@ final class V3AppModel: ObservableObject {
         case .tunnelFailed:
             return "Retry the product-owned tunnel startup after inspecting the latest failure instead of relying on legacy tunnel observation."
         case .injectionMissing:
-            return "The session can see \(snapshotName), but no-Python location injection is still unimplemented."
+            return "The session can see \(snapshotName), but the active device-agent injection transport is still unavailable."
         case .none:
             return "The session is healthy and should accept location injection."
         case .degraded(let reason):
             return reason
         }
+    }
+
+    nonisolated static func summarizeLocationCommandRecord(
+        _ record: LocationCommandRecord
+    ) -> String {
+        var parts: [String] = [
+            "\(record.action.title)",
+            "\(record.outcome.title)",
+            record.backendTrack.shortLabel
+        ]
+        if let exitCode = record.exitCode {
+            parts.append("exit \(exitCode)")
+        }
+        if !record.diagnosticLines.isEmpty {
+            parts.append("\(record.diagnosticLines.count) diagnostics")
+        }
+        parts.append(record.summary)
+        if let detail = record.detail, !detail.isEmpty {
+            parts.append(detail)
+        }
+        return parts.joined(separator: " · ")
     }
 
     func resetRuntimeState() {
@@ -1484,6 +1606,7 @@ final class V3AppModel: ObservableObject {
             connectionSummary: "INITIALIZING...",
             iosVersion: nil,
             deviceName: nil,
+            deviceIdentifier: nil,
             serialSuffix: nil,
             vendorID: nil,
             productID: nil,
@@ -1494,5 +1617,6 @@ final class V3AppModel: ObservableObject {
         availabilityAssessment = nil
         deviceAssessment = nil
         tunnelAssessment = nil
+        lastLocationCommandRecord = nil
     }
 }

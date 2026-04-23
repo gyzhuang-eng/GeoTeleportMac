@@ -11,3 +11,4 @@ build/
 *.hmap
 *.dSYM
 *.dSYM.zip
+.omx/

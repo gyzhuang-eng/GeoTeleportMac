@@ -4,21 +4,24 @@ enum BackendTrack: String, CaseIterable {
     case legacyPreview
     case noPythonStub
 
-    var displayName: String {
+    static var primaryTrack: BackendTrack { .noPythonStub }
+    static var userSelectableCases: [BackendTrack] { [.noPythonStub] }
+
+    nonisolated var displayName: String {
         switch self {
         case .legacyPreview:
-            return "Legacy Preview"
+            return "Compatibility Preview"
         case .noPythonStub:
-            return "No-Python Stub"
+            return "Device Agent"
         }
     }
 
-    var shortLabel: String {
+    nonisolated var shortLabel: String {
         switch self {
         case .legacyPreview:
-            return "LEGACY"
+            return "COMPAT"
         case .noPythonStub:
-            return "NO-PY"
+            return "AGENT"
         }
     }
 }
@@ -48,7 +51,7 @@ enum DeviceSessionState: Equatable {
     case readyForInjection
     case degraded(String)
 
-    var title: String {
+    nonisolated var title: String {
         switch self {
         case .backendUnavailable:
             return "Backend Unavailable"
@@ -90,7 +93,7 @@ enum SessionBlocker: Equatable {
     case degraded(String)
     case none
 
-    var title: String {
+    nonisolated var title: String {
         switch self {
         case .backendUnavailable:
             return "Backend Unavailable"
@@ -133,7 +136,7 @@ enum SessionReadinessGate: Equatable {
     case injectionTransport
     case ready
 
-    var title: String {
+    nonisolated var title: String {
         switch self {
         case .backendBootstrap:
             return "Backend Bootstrap"
@@ -160,7 +163,7 @@ enum ConnectionHealth: Equatable {
     case degraded
     case healthy
 
-    var label: String {
+    nonisolated var label: String {
         switch self {
         case .offline:
             return "OFFLINE"
@@ -181,7 +184,7 @@ enum BackendAvailability: Equatable {
     case partial(String)
     case ready
 
-    var summary: String? {
+    nonisolated var summary: String? {
         switch self {
         case .unavailable(let value), .partial(let value):
             return value
@@ -190,21 +193,21 @@ enum BackendAvailability: Equatable {
         }
     }
 
-    var isReady: Bool {
+    nonisolated var isReady: Bool {
         if case .ready = self {
             return true
         }
         return false
     }
 
-    var isUnavailable: Bool {
+    nonisolated var isUnavailable: Bool {
         if case .unavailable = self {
             return true
         }
         return false
     }
 
-    var canRefreshDeviceState: Bool {
+    nonisolated var canRefreshDeviceState: Bool {
         switch self {
         case .partial, .ready:
             return true
@@ -219,18 +222,19 @@ struct DeviceSnapshot: Codable, Equatable {
     let connectionSummary: String
     let iosVersion: String?
     let deviceName: String?
+    let deviceIdentifier: String?
     let serialSuffix: String?
     let vendorID: String?
     let productID: String?
     let probeSource: String?
     let matchedDeviceCount: Int
 
-    var iosMajorVersion: Int? {
+    nonisolated var iosMajorVersion: Int? {
         guard let iosVersion else { return nil }
         return Int(iosVersion.split(separator: ".").first ?? "")
     }
 
-    var displayName: String {
+    nonisolated var displayName: String {
         let trimmedName = deviceName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if !trimmedName.isEmpty {
             return trimmedName
@@ -258,10 +262,55 @@ struct TeleportResponse: Codable, Equatable {
     let exitCode: Int32
 }
 
+struct LocationCommandExecution: Equatable {
+    let response: TeleportResponse
+    let diagnosticLines: [String]
+}
+
 enum BackendFailure: Error, Equatable {
     case unavailable(String)
     case invalidRequest(String)
     case executionFailed(String)
+}
+
+enum LocationCommandAction: String, Equatable {
+    case set
+    case clear
+
+    nonisolated var title: String {
+        switch self {
+        case .set:
+            return "Set Location"
+        case .clear:
+            return "Clear Location"
+        }
+    }
+}
+
+enum LocationCommandOutcome: String, Equatable {
+    case succeeded
+    case failed
+
+    nonisolated var title: String {
+        switch self {
+        case .succeeded:
+            return "Succeeded"
+        case .failed:
+            return "Failed"
+        }
+    }
+}
+
+struct LocationCommandRecord: Equatable {
+    let action: LocationCommandAction
+    let backendTrack: BackendTrack
+    let outcome: LocationCommandOutcome
+    let summary: String
+    let detail: String?
+    let exitCode: Int32?
+    let stdout: String?
+    let stderr: String?
+    let diagnosticLines: [String]
 }
 
 protocol DeviceBackend {
@@ -270,5 +319,6 @@ protocol DeviceBackend {
     func probeAvailability() -> BackendAvailability
     func fetchConnectedDevice() -> DeviceSnapshot
     func fetchTunnelState(for device: DeviceSnapshot) -> TunnelState
-    func setLocation(_ request: TeleportRequest) -> Result<TeleportResponse, BackendFailure>
+    func setLocation(_ request: TeleportRequest) -> Result<LocationCommandExecution, BackendFailure>
+    func clearLocation() -> Result<LocationCommandExecution, BackendFailure>
 }
