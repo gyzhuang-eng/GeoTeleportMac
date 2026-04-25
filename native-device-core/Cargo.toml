@@ -1,0 +1,12 @@
+[package]
+name = "geoteleport-device-core"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "geoteleport-device-core"
+path = "src/main.rs"
+
+[dependencies]
+idevice = { version = "0.1.58", features = ["usbmuxd", "location_simulation", "pair", "rustls", "core_device_proxy", "tunnel_tcp_stack", "rsd", "xpc", "dvt"] }
+tokio = { version = "1.52.1", features = ["macros", "rt-multi-thread", "io-util", "io-std"] }

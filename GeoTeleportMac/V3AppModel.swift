@@ -4,6 +4,21 @@ import Foundation
 @MainActor
 final class V3AppModel: ObservableObject {
     @Published var backendTrack: BackendTrack = BackendTrack.primaryTrack
+
+    // Multi-device selection: persisted across launches via UserDefaults.
+    @Published var selectedDeviceUDID: String? {
+        didSet {
+            if let udid = selectedDeviceUDID, !udid.isEmpty {
+                UserDefaults.standard.set(udid, forKey: "v3.selectedDeviceUDID")
+            } else {
+                UserDefaults.standard.removeObject(forKey: "v3.selectedDeviceUDID")
+            }
+        }
+    }
+
+    var availableDevices: [DevicePickerEntry] {
+        deviceSnapshot.availableDevices ?? []
+    }
     @Published var backendAvailability: BackendAvailability = .unavailable("Backend not initialized")
     @Published var backendCapabilities = BackendCapabilities(
         canDiscoverDevices: false,
@@ -424,9 +439,11 @@ final class V3AppModel: ObservableObject {
     }
 
     var needsTunnel: Bool {
-        if backendTrack == .noPythonStub,
-           tunnelAssessment?.injectionTransportProbeResult?.transportState == .xcodeTestHarness {
-            return false
+        if backendTrack == .noPythonStub {
+            let transport = tunnelAssessment?.injectionTransportProbeResult?.transportState
+            if transport == .xcodeTestHarness || transport == .nativeRsd || transport == .nativeLockdown {
+                return false
+            }
         }
         return deviceIOSMajor >= 17 && !tunneldRunning
     }
@@ -644,6 +661,11 @@ final class V3AppModel: ObservableObject {
         tunnelAssessment: DeviceAgentSessionAssessment?
     ) -> DeviceSessionState? {
         let codes = (deviceAssessment?.blockerCodes ?? []) + (tunnelAssessment?.blockerCodes ?? [])
+        if codes.contains(.xcodeToolchainMissing) ||
+            codes.contains(.pymobiledevice3Missing) ||
+            codes.contains(.bundledDeviceCoreMissing) {
+            return .backendUnavailable
+        }
         if codes.contains(.multipleDevices) {
             return .multipleDevices
         }
@@ -719,6 +741,11 @@ final class V3AppModel: ObservableObject {
         }
 
         let codes = (availabilityAssessment?.blockerCodes ?? []) + (deviceAssessment?.blockerCodes ?? []) + (tunnelAssessment?.blockerCodes ?? [])
+        if codes.contains(.xcodeToolchainMissing) ||
+            codes.contains(.pymobiledevice3Missing) ||
+            codes.contains(.bundledDeviceCoreMissing) {
+            return .offline
+        }
         if codes.contains(.multipleDevices) ||
             codes.contains(.legacyTunnelObserved) ||
             codes.contains(.tunnelUnverified) {
@@ -798,6 +825,15 @@ final class V3AppModel: ObservableObject {
         tunnelAssessment: DeviceAgentSessionAssessment?
     ) -> SessionBlocker? {
         let codes = (availabilityAssessment?.blockerCodes ?? []) + (deviceAssessment?.blockerCodes ?? []) + (tunnelAssessment?.blockerCodes ?? [])
+        if codes.contains(.xcodeToolchainMissing) {
+            return .xcodeToolchainMissing
+        }
+        if codes.contains(.pymobiledevice3Missing) {
+            return .pymobiledevice3Missing
+        }
+        if codes.contains(.bundledDeviceCoreMissing) {
+            return .bundledDeviceCoreMissing
+        }
         if codes.contains(.multipleDevices) {
             return .multipleDevices
         }
@@ -1088,6 +1124,11 @@ final class V3AppModel: ObservableObject {
             if codes.contains(.noDevice) || isState(sessionState, matching: .disconnected) {
                 return .deviceAttachment
             }
+            if codes.contains(.xcodeToolchainMissing) ||
+                codes.contains(.pymobiledevice3Missing) ||
+                codes.contains(.bundledDeviceCoreMissing) {
+                return .backendBootstrap
+            }
             if codes.contains(.multipleDevices) || isState(sessionState, matching: .multipleDevices) {
                 return .deviceSelection
             }
@@ -1114,7 +1155,7 @@ final class V3AppModel: ObservableObject {
         }
 
         switch blocker {
-        case .backendUnavailable, .backendPartial:
+        case .backendUnavailable, .backendPartial, .xcodeToolchainMissing, .pymobiledevice3Missing, .bundledDeviceCoreMissing:
             return .backendBootstrap
         case .noDevice:
             return .deviceAttachment
@@ -1285,7 +1326,7 @@ final class V3AppModel: ObservableObject {
         _ result: DeviceAgentInjectionTransportProbeResult
     ) -> String {
         switch result.transportState {
-        case .xcodeTestHarness:
+        case .nativeLockdown, .nativeRsd, .xcodeTestHarness:
             return "\(result.transportState.rawValue): \(result.summary) Input: \(result.contract.expectedInput). Next action: \(result.nextAction) Confidence: \(result.confidence.uppercased())."
         case .unavailable, .endpointBackedStub, .endpointBackedCommand:
             return "\(result.transportState.rawValue): \(result.summary) Contract: \(result.contract.contractID). Next action: \(result.nextAction) Confidence: \(result.confidence.uppercased())."
@@ -1338,6 +1379,10 @@ final class V3AppModel: ObservableObject {
             return nil
         }
         switch probe.transportState {
+        case .nativeLockdown:
+            return "Native lockdown injection is ready; location set/clear will execute directly via the bundled device-core binary without requiring Xcode or a tunnel endpoint."
+        case .nativeRsd:
+            return "Native RSD injection via ios17-location-daemon is active (iOS 17+). NativeDeviceCoreIos17LocationController manages the persistent daemon in the main app process."
         case .xcodeTestHarness:
             return "Direct Xcode-backed location injection is ready, so the primary transport no longer depends on Python or the compatibility tunnel path for this session."
         case .endpointBackedCommand:
@@ -1355,6 +1400,10 @@ final class V3AppModel: ObservableObject {
             return nil
         }
         switch probe.transportState {
+        case .nativeLockdown:
+            return "Run set/clear through the native device-core binary using the resolved UDID, without Xcode or a tunnel endpoint."
+        case .nativeRsd:
+            return "Run set/clear through ios17-location-daemon via NativeDeviceCoreIos17LocationController. The daemon will be started automatically on first use."
         case .xcodeTestHarness:
             return "Run set/clear through the Xcode test harness using the resolved device identifier, without rediscovering tunnel state or depending on the compatibility CLI bridge."
         case .endpointBackedCommand:
@@ -1463,6 +1512,9 @@ final class V3AppModel: ObservableObject {
         case (.backendUnavailable, .backendUnavailable),
             (.noDevice, .noDevice),
             (.backendPartial, .backendPartial),
+            (.xcodeToolchainMissing, .xcodeToolchainMissing),
+            (.pymobiledevice3Missing, .pymobiledevice3Missing),
+            (.bundledDeviceCoreMissing, .bundledDeviceCoreMissing),
             (.multipleDevices, .multipleDevices),
             (.deviceInfoMissing, .deviceInfoMissing),
             (.injectionTransportMissing, .injectionTransportMissing),
@@ -1489,6 +1541,12 @@ final class V3AppModel: ObservableObject {
             return "No device attached"
         case .backendPartial:
             return "Backend only partially available"
+        case .xcodeToolchainMissing:
+            return "This build requires a full Xcode install"
+        case .pymobiledevice3Missing:
+            return "This build requires pymobiledevice3"
+        case .bundledDeviceCoreMissing:
+            return "Bundled native device core not present yet"
         case .multipleDevices:
             return "Multiple devices detected"
         case .deviceInfoMissing:
@@ -1540,6 +1598,12 @@ final class V3AppModel: ObservableObject {
             return "Attach an iPhone over USB and trust this Mac on the device."
         case .backendPartial:
             return "Backend transport sees \(snapshotName), but readiness is still partial. Continue wiring session services."
+        case .xcodeToolchainMissing:
+            return "GeoTeleport requires Xcode on this build. The shipping version will not. (internal: Phase B.3)"
+        case .pymobiledevice3Missing:
+            return "GeoTeleport requires pymobiledevice3 on this build. The shipping version will not. (internal: Phase B.3)"
+        case .bundledDeviceCoreMissing:
+            return "GeoTeleport still lacks its bundled device core on this build. Phase B.3 replaces the developer-machine bridge."
         case .multipleDevices:
             return "Disconnect extra iPhones or add explicit device selection before deeper session work."
         case .deviceInfoMissing:

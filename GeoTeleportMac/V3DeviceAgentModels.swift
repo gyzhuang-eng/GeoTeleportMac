@@ -6,11 +6,19 @@ enum DeviceAgentErrorCode: String, Codable, Equatable {
     case transportExecutionFailed
     case unsupportedOperation
     case invalidRequest
+    case schemaVersionMismatch
 }
 
 struct DeviceAgentFailure: Error, Codable, Equatable {
     let code: DeviceAgentErrorCode
     let message: String
+
+    static func schemaVersionMismatch(expected: Int, got: Int) -> DeviceAgentFailure {
+        DeviceAgentFailure(
+            code: .schemaVersionMismatch,
+            message: "Device-agent protocol schema mismatch. Expected v\(expected), got v\(got)."
+        )
+    }
 }
 
 enum DeviceAgentEventLevel: String, Codable, Equatable {
@@ -89,6 +97,9 @@ struct DeviceAgentRefreshIntent: Codable, Equatable {
 }
 
 enum DeviceAgentAssessmentBlockerCode: String, Codable, Equatable {
+    case xcodeToolchainMissing
+    case pymobiledevice3Missing
+    case bundledDeviceCoreMissing
     case noDevice
     case multipleDevices
     case deviceInfoMissing
@@ -101,6 +112,12 @@ enum DeviceAgentAssessmentBlockerCode: String, Codable, Equatable {
 
     var title: String {
         switch self {
+        case .xcodeToolchainMissing:
+            return "Xcode Toolchain Missing"
+        case .pymobiledevice3Missing:
+            return "pymobiledevice3 Missing"
+        case .bundledDeviceCoreMissing:
+            return "Bundled Device Core Missing"
         case .noDevice:
             return "No Device"
         case .multipleDevices:
@@ -219,6 +236,8 @@ enum DeviceAgentTunnelEndpointState: String, Codable, Equatable {
 
 enum DeviceAgentInjectionTransportState: String, Codable, Equatable {
     case unavailable
+    case nativeLockdown
+    case nativeRsd
     case endpointBackedStub
     case endpointBackedCommand
     case xcodeTestHarness
@@ -227,6 +246,10 @@ enum DeviceAgentInjectionTransportState: String, Codable, Equatable {
         switch self {
         case .unavailable:
             return "Unavailable"
+        case .nativeLockdown:
+            return "Native Lockdown"
+        case .nativeRsd:
+            return "Native RSD"
         case .endpointBackedStub:
             return "Endpoint-Backed Stub"
         case .endpointBackedCommand:
@@ -239,6 +262,8 @@ enum DeviceAgentInjectionTransportState: String, Codable, Equatable {
 
 enum DeviceAgentInjectionTransportContractPhase: String, Codable, Equatable {
     case probeOnly
+    case nativeLockdown
+    case nativeRsd
     case endpointBackedStub
     case endpointBackedCommand
     case xcodeTestHarness
@@ -247,6 +272,10 @@ enum DeviceAgentInjectionTransportContractPhase: String, Codable, Equatable {
         switch self {
         case .probeOnly:
             return "Probe Only"
+        case .nativeLockdown:
+            return "Native Lockdown"
+        case .nativeRsd:
+            return "Native RSD"
         case .endpointBackedStub:
             return "Endpoint-Backed Stub"
         case .endpointBackedCommand:

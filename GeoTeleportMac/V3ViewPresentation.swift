@@ -66,7 +66,16 @@ struct V3ViewPresentation {
                    appModel.tunnelAssessment == nil {
                     switch appModel.readinessGate {
                     case .backendBootstrap:
-                        sessionTitle = "Device-agent backend bootstrapping"
+                        switch appModel.sessionBlocker {
+                        case .xcodeToolchainMissing:
+                            sessionTitle = "Xcode toolchain required on this build"
+                        case .pymobiledevice3Missing:
+                            sessionTitle = "pymobiledevice3 required on this build"
+                        case .bundledDeviceCoreMissing:
+                            sessionTitle = "Bundled device core not shipped yet"
+                        default:
+                            sessionTitle = "Device-agent backend bootstrapping"
+                        }
                         icon = "wrench.adjustable"
                         tint = alertRed
                     case .injectionTransport:
@@ -307,6 +316,12 @@ struct V3ViewPresentation {
                 return "ATTACH & TRUST DEVICE"
             case .backendPartial:
                 return "FINISH SESSION WIRING"
+            case .xcodeToolchainMissing:
+                return "INSTALL XCODE"
+            case .pymobiledevice3Missing:
+                return "INSTALL PYMOBILEDEVICE3"
+            case .bundledDeviceCoreMissing:
+                return "BUNDLE DEVICE CORE"
             case .multipleDevices:
                 return "RESOLVE DEVICE SELECTION"
             case .deviceInfoMissing:

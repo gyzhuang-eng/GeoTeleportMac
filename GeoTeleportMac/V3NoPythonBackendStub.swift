@@ -1,5 +1,40 @@
 import Foundation
 
+// Reference-type box holding mutable iOS 17+ state for NoPythonBackendStub.
+// NoPythonBackendStub is a struct, so mutable cross-call state lives here.
+private final class Ios17BackendState {
+    // Updated by fetchConnectedDevice; read by setLocation/clearLocation.
+    // Accesses happen on background DispatchQueue.global threads; NSLock guards them.
+    private let lock = NSLock()
+    private var _udid: String?
+    private var _major: Int?
+
+    let locationController = NativeDeviceCoreIos17LocationController()
+
+    var udid: String? {
+        get { lock.lock(); defer { lock.unlock() }; return _udid }
+        set { lock.lock(); defer { lock.unlock() }; _udid = newValue }
+    }
+
+    var iosMajor: Int? {
+        get { lock.lock(); defer { lock.unlock() }; return _major }
+        set { lock.lock(); defer { lock.unlock() }; _major = newValue }
+    }
+
+    func update(snapshot: DeviceSnapshot) {
+        lock.lock()
+        let newUdid = snapshot.deviceIdentifier
+        let newMajor = snapshot.iosMajorVersion
+        let udidChanged = newUdid != _udid
+        _udid = newUdid
+        _major = newMajor
+        lock.unlock()
+        if udidChanged {
+            locationController.invalidate()
+        }
+    }
+}
+
 struct NoPythonBackendStub: DeviceBackend {
     let track: BackendTrack = .noPythonStub
     let capabilities = BackendCapabilities(
@@ -8,6 +43,7 @@ struct NoPythonBackendStub: DeviceBackend {
         canInjectLocation: true
     )
     private let agentClient: DeviceAgentClient
+    private let ios17State = Ios17BackendState()
 
     init(agentClient: DeviceAgentClient = V3ChildProcessDeviceAgentClient()) {
         self.agentClient = agentClient
@@ -25,9 +61,10 @@ struct NoPythonBackendStub: DeviceBackend {
     func fetchConnectedDevice() -> DeviceSnapshot {
         switch agentClient.fetchConnectedDevice() {
         case .success(let state):
+            ios17State.update(snapshot: state.snapshot)
             return state.snapshot
         case .failure(let failure):
-            return DeviceSnapshot(
+            let errorSnapshot = DeviceSnapshot(
                 isConnected: false,
                 connectionSummary: failure.message.uppercased(),
                 iosVersion: nil,
@@ -39,6 +76,8 @@ struct NoPythonBackendStub: DeviceBackend {
                 probeSource: "agent-error",
                 matchedDeviceCount: 0
             )
+            ios17State.update(snapshot: errorSnapshot)
+            return errorSnapshot
         }
     }
 
@@ -52,6 +91,16 @@ struct NoPythonBackendStub: DeviceBackend {
     }
 
     func setLocation(_ request: TeleportRequest) -> Result<LocationCommandExecution, BackendFailure> {
+        if let major = ios17State.iosMajor, major >= 17,
+           let udid = ios17State.udid, !udid.isEmpty {
+            return ios17LocationResult(
+                ios17State.locationController.setLocation(
+                    udid: udid,
+                    lat: request.latitude,
+                    lon: request.longitude
+                )
+            )
+        }
         switch agentClient.setLocation(request) {
         case .success(let result):
             return .success(
@@ -66,13 +115,19 @@ struct NoPythonBackendStub: DeviceBackend {
                 return .failure(.invalidRequest(failure.message))
             case .transportExecutionFailed:
                 return .failure(.executionFailed(failure.message))
-            case .agentUnavailable, .transportUnimplemented, .unsupportedOperation:
+            case .agentUnavailable, .transportUnimplemented, .unsupportedOperation, .schemaVersionMismatch:
                 return .failure(.unavailable(failure.message))
             }
         }
     }
 
     func clearLocation() -> Result<LocationCommandExecution, BackendFailure> {
+        if let major = ios17State.iosMajor, major >= 17,
+           let udid = ios17State.udid, !udid.isEmpty {
+            return ios17LocationResult(
+                ios17State.locationController.clearLocation(udid: udid)
+            )
+        }
         switch agentClient.clearLocation() {
         case .success(let result):
             return .success(
@@ -87,10 +142,42 @@ struct NoPythonBackendStub: DeviceBackend {
                 return .failure(.invalidRequest(failure.message))
             case .transportExecutionFailed:
                 return .failure(.executionFailed(failure.message))
-            case .agentUnavailable, .transportUnimplemented, .unsupportedOperation:
+            case .agentUnavailable, .transportUnimplemented, .unsupportedOperation, .schemaVersionMismatch:
                 return .failure(.unavailable(failure.message))
             }
         }
+    }
+
+    private func ios17LocationResult(
+        _ result: Result<DeviceAgentTeleportResult, DeviceAgentFailure>
+    ) -> Result<LocationCommandExecution, BackendFailure> {
+        switch result {
+        case .success(let r):
+            return .success(LocationCommandExecution(
+                response: r.response,
+                diagnosticLines: r.events.map(\.logLine)
+            ))
+        case .failure(let f):
+            switch f.code {
+            case .transportExecutionFailed:
+                return .failure(.executionFailed(f.message))
+            default:
+                return .failure(.unavailable(f.message))
+            }
+        }
+    }
+
+    static func bootstrapNextAction(for blockers: [DeviceAgentAssessmentBlockerCode]) -> String {
+        if blockers.contains(.xcodeToolchainMissing) {
+            return "GeoTeleport requires Xcode on this build. The shipping version will not. (internal: Phase B.3)"
+        }
+        if blockers.contains(.pymobiledevice3Missing) {
+            return "GeoTeleport requires pymobiledevice3 on this build. The shipping version will not. (internal: Phase B.3)"
+        }
+        if blockers.contains(.bundledDeviceCoreMissing) {
+            return "GeoTeleport still lacks its bundled device core on this build. Phase B.3 replaces the developer-machine bridge."
+        }
+        return "Keep the bootstrap boundary separate from session readiness while the bundled device core is still missing."
     }
 
     func availabilityEvents() -> [DeviceAgentDiagnosticEvent] {
@@ -157,21 +244,24 @@ struct NoPythonBackendStub: DeviceBackend {
             } + [
                 DeviceAgentDiagnosticEvent(level: .info, message: "Assessment confidence: \(state.assessment.confidence)")
             ]
+            ios17State.update(snapshot: state.snapshot)
             return (state.snapshot, state.assessment, state.events + assessmentEvents)
         case .failure(let failure):
+            let errorSnapshot = DeviceSnapshot(
+                isConnected: false,
+                connectionSummary: failure.message.uppercased(),
+                iosVersion: nil,
+                deviceName: nil,
+                deviceIdentifier: nil,
+                serialSuffix: nil,
+                vendorID: nil,
+                productID: nil,
+                probeSource: "agent-error",
+                matchedDeviceCount: 0
+            )
+            ios17State.update(snapshot: errorSnapshot)
             return (
-                DeviceSnapshot(
-                    isConnected: false,
-                    connectionSummary: failure.message.uppercased(),
-                    iosVersion: nil,
-                    deviceName: nil,
-                    deviceIdentifier: nil,
-                    serialSuffix: nil,
-                    vendorID: nil,
-                    productID: nil,
-                    probeSource: "agent-error",
-                    matchedDeviceCount: 0
-                ),
+                errorSnapshot,
                 nil,
                 [
                     DeviceAgentDiagnosticEvent(level: .warning, message: failure.message),

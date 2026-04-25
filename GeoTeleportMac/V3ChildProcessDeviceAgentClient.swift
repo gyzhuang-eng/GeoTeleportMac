@@ -124,6 +124,14 @@ struct V3ChildProcessDeviceAgentClient: DeviceAgentClient {
         task.standardInput = stdinPipe
         task.standardOutput = stdoutPipe
         task.standardError = stderrPipe
+        // Pass user's preferred device UDID (set when multiple devices are connected).
+        if case .fetchConnectedDevice = request,
+           let preferred = UserDefaults.standard.string(forKey: "v3.selectedDeviceUDID"),
+           !preferred.isEmpty {
+            var env = ProcessInfo.processInfo.environment
+            env["GTM_PREFERRED_DEVICE_UDID"] = preferred
+            task.environment = env
+        }
 
         do {
             let requestData = try encoder.encode(request)
@@ -143,10 +151,14 @@ struct V3ChildProcessDeviceAgentClient: DeviceAgentClient {
                 )
             }
 
-            let response = try decoder.decode(DeviceAgentResponse.self, from: responseData)
-            switch response {
-            case .success(let payload):
-                return .success(payload)
+            switch decodeResponse(responseData) {
+            case .success(let response):
+                switch response {
+                case .success(let payload):
+                    return .success(payload)
+                case .failure(let failure):
+                    return .failure(failure)
+                }
             case .failure(let failure):
                 return .failure(failure)
             }
@@ -154,6 +166,37 @@ struct V3ChildProcessDeviceAgentClient: DeviceAgentClient {
             return fallbackSend(
                 request,
                 extraMessage: "Child-process agent transport failed: \(error.localizedDescription)"
+            )
+        }
+    }
+
+    private func decodeResponse(_ responseData: Data) -> Result<DeviceAgentResponse, DeviceAgentFailure> {
+        do {
+            let object = try JSONSerialization.jsonObject(with: responseData)
+            guard let dictionary = object as? [String: Any],
+                  let schemaVersion = dictionary["schemaVersion"] as? Int else {
+                return .failure(
+                    DeviceAgentFailure(
+                        code: .agentUnavailable,
+                        message: "Child-process agent returned a malformed response envelope."
+                    )
+                )
+            }
+            guard schemaVersion == DeviceAgentProtocolVersion.currentSchemaVersion else {
+                return .failure(
+                    DeviceAgentFailure.schemaVersionMismatch(
+                        expected: DeviceAgentProtocolVersion.currentSchemaVersion,
+                        got: schemaVersion
+                    )
+                )
+            }
+            return .success(try decoder.decode(DeviceAgentResponse.self, from: responseData))
+        } catch {
+            return .failure(
+                DeviceAgentFailure(
+                    code: .agentUnavailable,
+                    message: "Child-process agent returned undecodable JSON: \(error.localizedDescription)"
+                )
             )
         }
     }

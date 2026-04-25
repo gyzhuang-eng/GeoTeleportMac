@@ -13,6 +13,7 @@ struct DeviceInfoTransportServiceStack: DeviceInfoTransportServing {
     }
 
     init(services: [any DeviceInfoTransportServing] = [
+        NativeDeviceCoreDeviceInfoTransportService(),
         ReservedTypedMetadataDeviceInfoTransportService(),
         StubDeviceInfoTransportService()
     ]) {
@@ -221,6 +222,7 @@ private struct NullDeviceInfoTransportService: DeviceInfoTransportServing {
 
 struct DeviceAgentUSBIdentityProbe {
     let hasBootstrapCandidateIdentity: Bool
+    let udid: String?
     let displayName: String?
     let serialSuffix: String?
     let vendorID: String?
@@ -230,6 +232,9 @@ struct DeviceAgentUSBIdentityProbe {
 
     var observedProperties: [String] {
         var properties: [String] = []
+        if let udid, !udid.isEmpty {
+            properties.append("udid")
+        }
         if let displayName, !displayName.isEmpty {
             properties.append("deviceName")
         }
@@ -255,5 +260,175 @@ struct DeviceAgentUSBIdentityProbe {
         let hasStableIdentifiers = !(vendorID?.isEmpty ?? true) && !(productID?.isEmpty ?? true)
         let hasHumanIdentity = !(displayName?.isEmpty ?? true) || !(serialSuffix?.isEmpty ?? true)
         return hasBootstrapCandidateIdentity && hasStableIdentifiers && hasHumanIdentity
+    }
+}
+
+struct NativeDeviceCoreDeviceInfoTransportService: DeviceInfoTransportServing {
+    let transportID = "device-info.transport.native-lockdown"
+
+    func probeTransport(from probe: DeviceAgentUSBIdentityProbe) -> DeviceAgentDeviceInfoTransportProbeResult {
+        guard let udid = probe.udid, !udid.isEmpty else {
+            return makeProbeOnlyResult(reason: "No UDID available; native lockdown transport requires a UDID from device enumeration.")
+        }
+        guard let binaryPath = nativeDeviceCoreBinaryPath() else {
+            return makeProbeOnlyResult(reason: "Native device-core binary is not built; cannot query lockdown device info.")
+        }
+        switch nativeDeviceCoreRun(binaryPath: binaryPath, arguments: ["device-info", udid]) {
+        case .success(let output):
+            return parseLockdownOutput(output, udid: udid)
+        case .failure(let failure):
+            return makeProbeOnlyResult(reason: classifyDeviceInfoError(failure.message))
+        }
+    }
+
+    private func parseLockdownOutput(_ output: String, udid: String) -> DeviceAgentDeviceInfoTransportProbeResult {
+        guard let data = output.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return makeProbeOnlyResult(reason: "Failed to parse device-info JSON from native device-core.")
+        }
+
+        let deviceName = json["deviceName"] as? String
+        let productVersion = json["productVersion"] as? String
+        let deviceClass = json["deviceClass"] as? String
+        let productType = json["productType"] as? String
+
+        var observedProperties: [String] = ["udid"]
+        if let v = deviceName, !v.isEmpty { observedProperties.append("deviceName") }
+        if let v = productVersion, !v.isEmpty { observedProperties.append("productVersion") }
+        if let v = deviceClass, !v.isEmpty { observedProperties.append("deviceClass") }
+        if let v = productType, !v.isEmpty { observedProperties.append("productType") }
+
+        let shortID = String(udid.prefix(8))
+        let artifact = DeviceAgentTypedMetadataArtifact(
+            artifactID: "typed-metadata.lockdown.\(shortID)",
+            sourceTransportID: transportID,
+            deviceName: deviceName,
+            serialSuffix: nil,
+            vendorID: nil,
+            productID: nil,
+            iosVersion: productVersion,
+            observedProperties: observedProperties,
+            summary: "Authoritative device identity resolved via native lockdown transport."
+        )
+        let session = DeviceAgentTypedMetadataSession(
+            sessionID: "typed-metadata.session.lockdown.\(shortID)",
+            sourceTransportID: transportID,
+            artifactID: artifact.artifactID,
+            state: .resolvedIdentity,
+            summary: "Native lockdown transport resolved an authoritative device-identity metadata session.",
+            nextAction: "Use this resolved session to drive tunnel requirement and lifecycle decisions."
+        )
+        let typedMetadataResult = DeviceAgentTypedMetadataResult(
+            state: .resolved,
+            artifact: artifact,
+            session: session,
+            summary: "Native lockdown transport resolved authoritative device identity for UDID \(shortID)…",
+            nextAction: "Thread this lockdown-resolved session into tunnel ownership and injection planning.",
+            confidence: "high"
+        )
+        return DeviceAgentDeviceInfoTransportProbeResult(
+            transportID: transportID,
+            transportState: .bootstrapReady,
+            contract: DeviceAgentDeviceInfoTransportContract(
+                contractID: "device-info.transport.native-lockdown",
+                phase: .bootstrapCandidate,
+                summary: "Native lockdown transport resolved authoritative device identity via usbmuxd.",
+                expectedArtifact: "Authoritative device metadata from lockdown"
+            ),
+            typedMetadataResult: typedMetadataResult,
+            summary: "Native lockdown transport resolved authoritative device identity for UDID \(shortID)…",
+            nextAction: "Promote the lockdown-resolved session into tunnel and injection readiness decisions.",
+            confidence: "high"
+        )
+    }
+
+    private func classifyDeviceInfoError(_ msg: String) -> String {
+        let normalized = msg.lowercased()
+        if normalized.contains("locked") || normalized.contains("password") || normalized.contains("passcode") {
+            return "iPhone is locked. Unlock the device and try again."
+        }
+        if normalized.contains("not paired") || normalized.contains("pairing") || normalized.contains("trust")
+            || normalized.contains("ssl") || normalized.contains("certificate") {
+            return "iPhone has not trusted this Mac. Unlock the device, then tap \"Trust\" on the trust-this-computer prompt."
+        }
+        return "Could not read device info from iPhone (\(msg)). Ensure the device is unlocked and has trusted this Mac."
+    }
+
+    private func makeProbeOnlyResult(reason: String) -> DeviceAgentDeviceInfoTransportProbeResult {
+        DeviceAgentDeviceInfoTransportProbeResult(
+            transportID: transportID,
+            transportState: .probeOnly,
+            contract: DeviceAgentDeviceInfoTransportContract(
+                contractID: "device-info.transport.native-lockdown",
+                phase: .probeOnly,
+                summary: reason,
+                expectedArtifact: "UDID and native device-core binary"
+            ),
+            typedMetadataResult: DeviceAgentTypedMetadataResult(
+                state: .unavailable,
+                artifact: nil,
+                session: nil,
+                summary: "Native lockdown transport is probe-only: \(reason)",
+                nextAction: "Ensure a UDID is available from device enumeration and the native device-core binary is built.",
+                confidence: "low"
+            ),
+            summary: "Native lockdown transport is probe-only.",
+            nextAction: reason,
+            confidence: "low"
+        )
+    }
+}
+
+private func nativeDeviceCoreBinaryPath(filePath: String = #filePath) -> String? {
+    // Shipped DMG: binary bundled at Contents/Helpers/
+    let helpersURL = Bundle.main.bundleURL
+        .appendingPathComponent("Contents/Helpers/geoteleport-device-core")
+    if FileManager.default.isExecutableFile(atPath: helpersURL.path) {
+        return helpersURL.path
+    }
+    if let auxURL = Bundle.main.url(forAuxiliaryExecutable: "geoteleport-device-core"),
+       FileManager.default.isExecutableFile(atPath: auxURL.path) {
+        return auxURL.path
+    }
+    // Developer build: binary lives next to the source tree
+    let fileURL = URL(fileURLWithPath: filePath)
+    let repositoryRoot = fileURL
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let binaryURL = repositoryRoot
+        .appendingPathComponent("native-device-core", isDirectory: true)
+        .appendingPathComponent("target", isDirectory: true)
+        .appendingPathComponent("debug", isDirectory: true)
+        .appendingPathComponent("geoteleport-device-core", isDirectory: false)
+    return FileManager.default.isExecutableFile(atPath: binaryURL.path) ? binaryURL.path : nil
+}
+
+private func nativeDeviceCoreRun(
+    binaryPath: String,
+    arguments: [String]
+) -> Result<String, DeviceAgentFailure> {
+    let task = Process()
+    let stdoutPipe = Pipe()
+    let stderrPipe = Pipe()
+    task.executableURL = URL(fileURLWithPath: binaryPath)
+    task.arguments = arguments
+    task.standardOutput = stdoutPipe
+    task.standardError = stderrPipe
+    do {
+        try task.run()
+        task.waitUntilExit()
+        let outputData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+        let errorData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+        guard task.terminationStatus == 0 else {
+            let msg = String(data: errorData, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return .failure(DeviceAgentFailure(
+                code: .agentUnavailable,
+                message: msg?.isEmpty == false ? msg! : "\(binaryPath) exited with code \(task.terminationStatus)"
+            ))
+        }
+        return .success(String(data: outputData, encoding: .utf8) ?? "")
+    } catch {
+        return .failure(DeviceAgentFailure(code: .agentUnavailable, message: error.localizedDescription))
     }
 }

@@ -81,6 +81,9 @@ enum SessionBlocker: Equatable {
     case backendUnavailable
     case noDevice
     case backendPartial
+    case xcodeToolchainMissing
+    case pymobiledevice3Missing
+    case bundledDeviceCoreMissing
     case multipleDevices
     case deviceInfoMissing
     case injectionTransportMissing
@@ -101,6 +104,12 @@ enum SessionBlocker: Equatable {
             return "No Device"
         case .backendPartial:
             return "Backend Partial"
+        case .xcodeToolchainMissing:
+            return "Xcode Toolchain Missing"
+        case .pymobiledevice3Missing:
+            return "pymobiledevice3 Missing"
+        case .bundledDeviceCoreMissing:
+            return "Bundled Device Core Missing"
         case .multipleDevices:
             return "Multiple Devices"
         case .deviceInfoMissing:
@@ -217,6 +226,13 @@ enum BackendAvailability: Equatable {
     }
 }
 
+struct DevicePickerEntry: Codable, Equatable, Identifiable {
+    let udid: String
+    let name: String
+    let iosVersion: String?
+    var id: String { udid }
+}
+
 struct DeviceSnapshot: Codable, Equatable {
     let isConnected: Bool
     let connectionSummary: String
@@ -228,6 +244,7 @@ struct DeviceSnapshot: Codable, Equatable {
     let productID: String?
     let probeSource: String?
     let matchedDeviceCount: Int
+    var availableDevices: [DevicePickerEntry]?
 
     nonisolated var iosMajorVersion: Int? {
         guard let iosVersion else { return nil }

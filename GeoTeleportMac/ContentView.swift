@@ -231,6 +231,7 @@ struct ContentView: View {
     }
 
     @State private var showDebugLog: Bool = false
+    @State private var showDevicePicker: Bool = false
 
     @State private var region = MKCoordinateRegion(
         center: CLLocationCoordinate2D(latitude: 25.185317, longitude: 55.281516),
@@ -362,6 +363,12 @@ struct ContentView: View {
                 // 1b. iOS 17+ tunnel 提示横幅（tunnel 跑起来后自动收起）
                 if showsLegacyTunnelBanner {
                     tunneldBanner
+                        .padding(.horizontal, 15)
+                }
+
+                // 1c. 多设备选择横幅
+                if appModel.sessionState == .multipleDevices && !appModel.availableDevices.isEmpty {
+                    multipleDevicesBanner
                         .padding(.horizontal, 15)
                 }
 
@@ -550,6 +557,21 @@ struct ContentView: View {
             appModel.backendTrack = activeBackendTrack
             logSystemInfo()
             performInitialRefresh()
+        }
+        .sheet(isPresented: $showDevicePicker) {
+            DevicePickerSheet(
+                devices: appModel.availableDevices,
+                selectedUDID: appModel.selectedDeviceUDID
+            ) { chosen in
+                appModel.selectedDeviceUDID = chosen
+                showDevicePicker = false
+                performScheduledRefresh()
+            }
+        }
+        .onChange(of: appModel.sessionState) { _, newState in
+            if case .multipleDevices = newState, !appModel.availableDevices.isEmpty {
+                showDevicePicker = true
+            }
         }
     }
 
@@ -779,6 +801,50 @@ struct ContentView: View {
                 )
         )
      }
+
+    // MARK: - Multiple devices banner
+
+    private var multipleDevicesBanner: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "iphone.gen3.badge.plus")
+                .font(.system(size: 14))
+                .foregroundColor(accentBlue)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("\(appModel.availableDevices.count) iPhones connected")
+                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                    .foregroundColor(.primary)
+                Text("Select which device to teleport.")
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+            }
+            Spacer()
+            Button {
+                showDevicePicker = true
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "list.bullet").font(.system(size: 10))
+                    Text("Select").font(.system(size: 10, weight: .semibold, design: .monospaced))
+                }
+                .foregroundColor(.white)
+                .padding(.horizontal, 10).padding(.vertical, 5)
+                .background(Capsule().fill(accentBlue.opacity(0.85)))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(.regularMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(accentBlue.opacity(0.06))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(accentBlue.opacity(0.40), lineWidth: 1)
+                )
+        )
+    }
 
     // 一键打开终端并运行 tunnel 命令（只差用户输 sudo 密码）
     private func launchTunneldInTerminal(cmd: String) {

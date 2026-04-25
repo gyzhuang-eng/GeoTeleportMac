@@ -12,3 +12,4 @@ build/
 *.dSYM
 *.dSYM.zip
 .omx/
+native-device-core/target/

@@ -1,5 +1,13 @@
 import Foundation
 
+enum DeviceAgentProtocolVersion {
+    static let currentSchemaVersion = 1
+}
+
+enum DeviceAgentProtocolCodingError: Error {
+    case schemaVersionMismatch(expected: Int, got: Int)
+}
+
 enum DeviceAgentRequest: Codable, Equatable {
     case probeAvailability
     case fetchConnectedDevice
@@ -8,6 +16,7 @@ enum DeviceAgentRequest: Codable, Equatable {
     case clearLocation
 
     private enum CodingKeys: String, CodingKey {
+        case schemaVersion
         case kind
         case deviceSnapshot
         case teleportRequest
@@ -23,6 +32,13 @@ enum DeviceAgentRequest: Codable, Equatable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        let schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
+        guard schemaVersion == DeviceAgentProtocolVersion.currentSchemaVersion else {
+            throw DeviceAgentProtocolCodingError.schemaVersionMismatch(
+                expected: DeviceAgentProtocolVersion.currentSchemaVersion,
+                got: schemaVersion
+            )
+        }
         let kind = try container.decode(Kind.self, forKey: .kind)
         switch kind {
         case .probeAvailability:
@@ -40,6 +56,7 @@ enum DeviceAgentRequest: Codable, Equatable {
 
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(DeviceAgentProtocolVersion.currentSchemaVersion, forKey: .schemaVersion)
         switch self {
         case .probeAvailability:
             try container.encode(Kind.probeAvailability, forKey: .kind)
@@ -117,6 +134,7 @@ enum DeviceAgentResponse: Codable, Equatable {
     case failure(DeviceAgentFailure)
 
     private enum CodingKeys: String, CodingKey {
+        case schemaVersion
         case kind
         case success
         case failure
@@ -129,6 +147,13 @@ enum DeviceAgentResponse: Codable, Equatable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        let schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
+        guard schemaVersion == DeviceAgentProtocolVersion.currentSchemaVersion else {
+            throw DeviceAgentProtocolCodingError.schemaVersionMismatch(
+                expected: DeviceAgentProtocolVersion.currentSchemaVersion,
+                got: schemaVersion
+            )
+        }
         let kind = try container.decode(Kind.self, forKey: .kind)
         switch kind {
         case .success:
@@ -140,6 +165,7 @@ enum DeviceAgentResponse: Codable, Equatable {
 
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(DeviceAgentProtocolVersion.currentSchemaVersion, forKey: .schemaVersion)
         switch self {
         case .success(let payload):
             try container.encode(Kind.success, forKey: .kind)
