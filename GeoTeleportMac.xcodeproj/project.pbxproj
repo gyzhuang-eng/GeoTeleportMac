@@ -131,10 +131,11 @@
 			);
 			outputPaths = (
 				"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Helpers/geoteleport-device-core",
+				"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Helpers/libgeoteleport_device_core.dylib",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "set -e\ncd \"$SRCROOT/native-device-core\"\nif [ \"$CONFIGURATION\" = \"Release\" ]; then\n    cargo build --release 2>&1\n    RUST_BINARY=\"$SRCROOT/native-device-core/target/release/geoteleport-device-core\"\nelse\n    cargo build 2>&1\n    RUST_BINARY=\"$SRCROOT/native-device-core/target/debug/geoteleport-device-core\"\nfi\nHELPERS_DIR=\"$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Helpers\"\nmkdir -p \"$HELPERS_DIR\"\ncp \"$RUST_BINARY\" \"$HELPERS_DIR/geoteleport-device-core\"\nif [ -n \"$EXPANDED_CODE_SIGN_IDENTITY\" ] && [ \"$CODE_SIGNING_REQUIRED\" = \"YES\" ]; then\n    codesign --force --sign \"$EXPANDED_CODE_SIGN_IDENTITY\" \\\n        --options runtime \\\n        \"$HELPERS_DIR/geoteleport-device-core\"\nfi";
+			shellScript = "set -e\ncd \"$SRCROOT/native-device-core\"\nif [ \"$CONFIGURATION\" = \"Release\" ]; then\n    cargo build --release 2>&1\n    RUST_BINARY=\"$SRCROOT/native-device-core/target/release/geoteleport-device-core\"\n    RUST_DYLIB=\"$SRCROOT/native-device-core/target/release/libgeoteleport_device_core.dylib\"\nelse\n    cargo build 2>&1\n    RUST_BINARY=\"$SRCROOT/native-device-core/target/debug/geoteleport-device-core\"\n    RUST_DYLIB=\"$SRCROOT/native-device-core/target/debug/libgeoteleport_device_core.dylib\"\nfi\nHELPERS_DIR=\"$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Helpers\"\nmkdir -p \"$HELPERS_DIR\"\ncp \"$RUST_BINARY\" \"$HELPERS_DIR/geoteleport-device-core\"\ncp \"$RUST_DYLIB\" \"$HELPERS_DIR/libgeoteleport_device_core.dylib\"\nif [ -n \"$EXPANDED_CODE_SIGN_IDENTITY\" ] && [ \"$CODE_SIGNING_REQUIRED\" = \"YES\" ]; then\n    codesign --force --sign \"$EXPANDED_CODE_SIGN_IDENTITY\" \\\n        --options runtime \\\n        \"$HELPERS_DIR/geoteleport-device-core\" \\\n        \"$HELPERS_DIR/libgeoteleport_device_core.dylib\"\nfi";
 			showEnvVarsInLog = 0;
 		};
 /* End PBXShellScriptBuildPhase section */

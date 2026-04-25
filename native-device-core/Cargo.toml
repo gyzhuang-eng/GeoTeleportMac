@@ -3,6 +3,10 @@ name = "geoteleport-device-core"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "geoteleport_device_core"
+crate-type = ["cdylib", "staticlib"]
+
 [[bin]]
 name = "geoteleport-device-core"
 path = "src/main.rs"

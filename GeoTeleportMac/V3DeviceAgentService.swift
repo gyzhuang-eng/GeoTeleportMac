@@ -1173,6 +1173,23 @@ private enum NativeDeviceCoreMetadataProbe {
     }
 
     static func fetchAttachedMobileDevices() -> Result<[XcodeAttachedAppleDevice], DeviceAgentFailure> {
+        if NativeDeviceCoreFFI.isAvailable {
+            do {
+                let text = try NativeDeviceCoreFFI.enumerateDevices()
+                return XcodeDeviceMetadataProbe.parseAttachedMobileDevices(from: text)
+            } catch {
+                V3TelemetryStore.shared.record(
+                    type: .enumFailure,
+                    summary: "native-device-core FFI enumerate failed",
+                    errorMessage: error.localizedDescription
+                )
+                return .failure(DeviceAgentFailure(
+                    code: .agentUnavailable,
+                    message: "Bundled native device-core FFI failed to enumerate devices: \(error.localizedDescription)"
+                ))
+            }
+        }
+        // Fallback: shell out to the binary (development without FFI dylib)
         guard let binaryPath = resolveBinaryPath() else {
             return .failure(
                 DeviceAgentFailure(
@@ -1181,7 +1198,6 @@ private enum NativeDeviceCoreMetadataProbe {
                 )
             )
         }
-
         switch runCaptured(executable: binaryPath, arguments: ["enumerate-ios-devices"]) {
         case .success(let text):
             return XcodeDeviceMetadataProbe.parseAttachedMobileDevices(from: text)
@@ -1931,6 +1947,21 @@ private struct NativeDeviceCoreInjectionTransportAdapter: InjectionTransportServ
                 message: "iOS \(major) device: set-location must be routed through NativeDeviceCoreIos17LocationController in the main app process, not via the single-shot agent."
             ))
         }
+        if NativeDeviceCoreFFI.isAvailable {
+            do {
+                _ = try NativeDeviceCoreFFI.setLocation(udid: udid, lat: request.latitude, lon: request.longitude)
+                return .success(.teleportResult(DeviceAgentTeleportResult(
+                    response: TeleportResponse(stdout: "", stderr: "", exitCode: 0),
+                    events: [DeviceAgentDiagnosticEvent(
+                        level: .info,
+                        message: "Location set via native lockdown FFI to \(request.latitude),\(request.longitude) on \(udid)."
+                    )]
+                )))
+            } catch {
+                return .failure(DeviceAgentFailure(code: .transportExecutionFailed, message: error.localizedDescription))
+            }
+        }
+        // Fallback: shell out to the binary
         guard let binaryPath = NativeDeviceCoreMetadataProbe.resolveBinaryPath() else {
             return .failure(DeviceAgentFailure(
                 code: .agentUnavailable,
@@ -1977,6 +2008,21 @@ private struct NativeDeviceCoreInjectionTransportAdapter: InjectionTransportServ
                 message: "iOS \(major) device: clear-location must be routed through NativeDeviceCoreIos17LocationController in the main app process, not via the single-shot agent."
             ))
         }
+        if NativeDeviceCoreFFI.isAvailable {
+            do {
+                _ = try NativeDeviceCoreFFI.clearLocation(udid: udid)
+                return .success(.teleportResult(DeviceAgentTeleportResult(
+                    response: TeleportResponse(stdout: "", stderr: "", exitCode: 0),
+                    events: [DeviceAgentDiagnosticEvent(
+                        level: .info,
+                        message: "Location cleared via native lockdown FFI on \(udid)."
+                    )]
+                )))
+            } catch {
+                return .failure(DeviceAgentFailure(code: .transportExecutionFailed, message: error.localizedDescription))
+            }
+        }
+        // Fallback: shell out to the binary
         guard let binaryPath = NativeDeviceCoreMetadataProbe.resolveBinaryPath() else {
             return .failure(DeviceAgentFailure(
                 code: .agentUnavailable,

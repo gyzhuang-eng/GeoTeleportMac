@@ -354,12 +354,34 @@ boundary should not change during Phase B.
   a `.txt` file via `NSSavePanel` containing session state dump, debug log,
   and telemetry events.
 
-### Phase E — Cross-platform core extraction
+### Phase E — Cross-platform core extraction 🟡 IN PROGRESS
 
-Restructure so the device core is a standalone library with a stable C / FFI
-boundary. The macOS host shrinks to: SwiftUI shell + domain model + FFI
-adapter to the core. This is the point at which the codebase stops being
-"a Mac app" and starts being "a product with a Mac front-end."
+**Rust library:** `native-device-core` now produces both a CLI binary and a C FFI
+dynamic library (`libgeoteleport_device_core.dylib`). Shared logic lives in
+`src/core.rs`; FFI exports in `src/lib.rs`; CLI shim in `src/main.rs`.
+
+**C FFI surface** (5 exports):
+- `gte_enumerate_ios_devices()` → JSON
+- `gte_device_info(udid)` → JSON
+- `gte_set_location(udid, lat, lon)` → JSON
+- `gte_clear_location(udid)` → JSON
+- `gte_free_string(ptr)` → void
+
+**Swift FFI wrapper** (`NativeDeviceCoreFFI.swift`): Uses `dlopen`/`dlsym` to
+load the dylib at runtime. Throwing API: `enumerateDevices()`, `deviceInfo(udid:)`,
+`setLocation(udid:lat:lon:)`, `clearLocation(udid:)`. Dylib resolution mirrors
+the binary path lookup: `Contents/Helpers/` first, then `Contents/MacOS/`,
+then the developer build tree.
+
+**Process replacement:** `NativeDeviceCoreMetadataProbe.fetchAttachedMobileDevices()`,
+`NativeDeviceCoreInjectionTransportAdapter.setLocation()`/`.clearLocation()`,
+and `NativeDeviceCoreDeviceInfoTransportService.probeTransport()` now prefer FFI
+when the dylib is available, falling back to Process-based shell-out for
+development without the FFI dylib. The `ios17-location-daemon` continues to
+use Process (inherently long-running, needs stdin/stdout pipes).
+
+**Xcode:** build phase copies both the binary and dylib to `Contents/Helpers/`
+and signs them with Hardened Runtime when code signing is active.
 
 ### Phase F — Windows port
 
@@ -383,7 +405,7 @@ adapter to the core. This is the point at which the codebase stops being
 | B.3   | Bundled device core implementation     | ✅ DONE (Phase B exit criteria met) |
 | C     | DMG signing, notarization, first-run   | 🟡 IN PROGRESS |
 | D     | Consumer-Mac validation                | 🟡 IN PROGRESS |
-| E     | Cross-platform core extraction         | ⬜ NOT STARTED |
+| E     | Cross-platform core extraction         | 🟡 IN PROGRESS |
 | F     | Windows port                           | ⬜ NOT STARTED |
 
 A previous revision of this plan marked Phases 1–3 as "complete in practice."
@@ -925,3 +947,26 @@ without trawling git history.
    error). Max 500 entries / 5 MB file with automatic oldest-entry rotation.
    Telemetry content included in diagnostics export. Updated §0 Handoff Snapshot
    and Phase D status to IN PROGRESS.
+- **2026-04-25 — Phase E: Rust C FFI library + Swift FFI wrapper.**
+   (1) **Rust:** Added `[lib]` to `Cargo.toml` (`crate-type = ["cdylib", "staticlib"]`).
+   Extracted shared core logic into `src/core.rs` (`enumerate_ios_devices_core()`,
+   `device_info_core()`, `set_location_core()`, `clear_location_core()`, helpers).
+   Created `src/lib.rs` with 5 C FFI exports (`gte_enumerate_ios_devices`,
+   `gte_device_info`, `gte_set_location`, `gte_clear_location`, `gte_free_string`)
+   using `#[no_mangle] pub extern "C"`. Refactored `src/main.rs` to use `mod core`
+   directly (same-package library linking avoids crate name resolution issues).
+   Both binary and dylib compile cleanly.
+   (2) **Swift:** Created `NativeDeviceCoreFFI.swift` — uses `dlopen`/`dlsym` to
+   load `libgeoteleport_device_core.dylib` at runtime. Throwing API wraps each
+   FFI call with proper string cleanup. Dylib path resolution mirrors binary path
+   lookup (`Contents/Helpers/` → `Contents/MacOS/` → dev tree). PII-safe error
+   reporting via `NativeDeviceCoreFFIError` struct.
+   (3) **Wiring:** `NativeDeviceCoreMetadataProbe.fetchAttachedMobileDevices()`,
+   `NativeDeviceCoreInjectionTransportAdapter.setLocation()`/`.clearLocation()`,
+   and `NativeDeviceCoreDeviceInfoTransportService.probeTransport()` now prefer FFI
+   when dylib is available (`NativeDeviceCoreFFI.isAvailable`), falling back to
+   `Process`-based shell-out. `NativeDeviceCoreIos17LocationController` continues
+   using Process (long-running daemon).
+   (4) **Xcode:** Build phase copies `libgeoteleport_device_core.dylib` alongside
+   the binary to `Contents/Helpers/` and signs both. Build succeeds; all 25
+   self-check cases pass. Updated Phase E status to IN PROGRESS.

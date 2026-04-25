@@ -270,6 +270,15 @@ struct NativeDeviceCoreDeviceInfoTransportService: DeviceInfoTransportServing {
         guard let udid = probe.udid, !udid.isEmpty else {
             return makeProbeOnlyResult(reason: "No UDID available; native lockdown transport requires a UDID from device enumeration.")
         }
+        if NativeDeviceCoreFFI.isAvailable {
+            do {
+                let output = try NativeDeviceCoreFFI.deviceInfo(udid: udid)
+                return parseLockdownOutput(output, udid: udid)
+            } catch {
+                return makeProbeOnlyResult(reason: classifyDeviceInfoError(error.localizedDescription))
+            }
+        }
+        // Fallback: shell out to the binary (development without FFI dylib)
         guard let binaryPath = nativeDeviceCoreBinaryPath() else {
             return makeProbeOnlyResult(reason: "Native device-core binary is not built; cannot query lockdown device info.")
         }
