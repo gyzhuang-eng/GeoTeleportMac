@@ -968,5 +968,19 @@ without trawling git history.
    `Process`-based shell-out. `NativeDeviceCoreIos17LocationController` continues
    using Process (long-running daemon).
    (4) **Xcode:** Build phase copies `libgeoteleport_device_core.dylib` alongside
-   the binary to `Contents/Helpers/` and signs both. Build succeeds; all 25
-   self-check cases pass. Updated Phase E status to IN PROGRESS.
+    the binary to `Contents/Helpers/` and signs both. Build succeeds; all 25
+    self-check cases pass. Updated Phase E status to IN PROGRESS.
+- **2026-04-25 — Phase E cleanup: pymobiledevice3 fallback fully deleted.**
+    Removed ~2200 lines across 8 files: `EndpointBackedInjectionTransportCommandAdapter`,
+    `ProductOwnedTunnelStateController`, `LegacyObservedTunnelStateController`,
+    `SystemProcessProbe`, `TunnelStateControlling` protocol, `TunnelStateControllerStack`,
+    `NullTunnelStateController`, `InjectionTransportCommandInvocation`,
+    `InjectionTransportCommandFailureKind`, two self-check reports. Deleted files:
+    `V3LegacyCLIPathResolver.swift`, `V3ShellCommandRunner.swift`. Removed two
+    self-check entrypoints. Cleaned `DeviceAgentInjectionTransportState` (dropped
+    `.endpointBackedStub`/`.endpointBackedCommand`). Removed `pymobiledevice3`
+    probe from `ToolchainProbe`. `InjectionTransportServiceStack` now only contains
+    `NativeDeviceCoreInjectionTransportAdapter`. Simplified `makeTunnelAssessment`
+    to nativeRsd-only. No pymobiledevice3 shell-out paths remain. Build succeeds;
+    all 13 self-check cases pass (4+3+6).
+

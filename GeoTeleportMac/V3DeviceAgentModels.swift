@@ -238,8 +238,6 @@ enum DeviceAgentInjectionTransportState: String, Codable, Equatable {
     case unavailable
     case nativeLockdown
     case nativeRsd
-    case endpointBackedStub
-    case endpointBackedCommand
     case xcodeTestHarness
 
     var title: String {
@@ -250,10 +248,6 @@ enum DeviceAgentInjectionTransportState: String, Codable, Equatable {
             return "Native Lockdown"
         case .nativeRsd:
             return "Native RSD"
-        case .endpointBackedStub:
-            return "Endpoint-Backed Stub"
-        case .endpointBackedCommand:
-            return "Endpoint-Backed Command"
         case .xcodeTestHarness:
             return "Xcode Test Harness"
         }
@@ -264,8 +258,6 @@ enum DeviceAgentInjectionTransportContractPhase: String, Codable, Equatable {
     case probeOnly
     case nativeLockdown
     case nativeRsd
-    case endpointBackedStub
-    case endpointBackedCommand
     case xcodeTestHarness
 
     var title: String {
@@ -276,10 +268,6 @@ enum DeviceAgentInjectionTransportContractPhase: String, Codable, Equatable {
             return "Native Lockdown"
         case .nativeRsd:
             return "Native RSD"
-        case .endpointBackedStub:
-            return "Endpoint-Backed Stub"
-        case .endpointBackedCommand:
-            return "Endpoint-Backed Command"
         case .xcodeTestHarness:
             return "Xcode Test Harness"
         }

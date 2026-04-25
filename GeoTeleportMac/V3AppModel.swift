@@ -1327,7 +1327,7 @@ final class V3AppModel: ObservableObject {
         switch result.transportState {
         case .nativeLockdown, .nativeRsd, .xcodeTestHarness:
             return "\(result.transportState.rawValue): \(result.summary) Input: \(result.contract.expectedInput). Next action: \(result.nextAction) Confidence: \(result.confidence.uppercased())."
-        case .unavailable, .endpointBackedStub, .endpointBackedCommand:
+        case .unavailable:
             return "\(result.transportState.rawValue): \(result.summary) Contract: \(result.contract.contractID). Next action: \(result.nextAction) Confidence: \(result.confidence.uppercased())."
         }
     }
@@ -1384,10 +1384,7 @@ final class V3AppModel: ObservableObject {
             return "Native RSD injection via ios17-location-daemon is active (iOS 17+). NativeDeviceCoreIos17LocationController manages the persistent daemon in the main app process."
         case .xcodeTestHarness:
             return "Direct Xcode-backed location injection is ready, so the primary transport no longer depends on Python or the compatibility tunnel path for this session."
-        case .endpointBackedCommand:
-            guard let endpoint = tunnelAssessment?.tunnelEndpointResult else { return nil }
-            return "Verified tunnel endpoint \(endpoint.artifact.host):\(endpoint.artifact.port) is now product-owned state, and the endpoint-backed injection command adapter is ready to execute against it without rediscovering tunnel state."
-        case .unavailable, .endpointBackedStub:
+        case .unavailable:
             return nil
         }
     }
@@ -1405,10 +1402,7 @@ final class V3AppModel: ObservableObject {
             return "Run set/clear through ios17-location-daemon via NativeDeviceCoreIos17LocationController. The daemon will be started automatically on first use."
         case .xcodeTestHarness:
             return "Run set/clear through the Xcode test harness using the resolved device identifier, without rediscovering tunnel state or depending on the compatibility CLI bridge."
-        case .endpointBackedCommand:
-            guard let endpoint = tunnelAssessment?.tunnelEndpointResult else { return nil }
-            return "Run set/clear through the endpoint-backed command adapter using verified tunnel endpoint \(endpoint.artifact.host):\(endpoint.artifact.port), while keeping the tunnel artifact as the only tunnel-side input."
-        case .unavailable, .endpointBackedStub:
+        case .unavailable:
             return nil
         }
     }

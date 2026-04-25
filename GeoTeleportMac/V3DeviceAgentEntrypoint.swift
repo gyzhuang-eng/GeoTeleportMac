@@ -7,8 +7,6 @@ enum V3DeviceAgentEntrypoint {
     static let nativeDeviceCoreEnumerationSelfCheckArgument = "--v3-self-check-native-device-core-enumeration"
     static let nativeDeviceCoreDeviceInfoSelfCheckArgument = "--v3-self-check-native-device-core-device-info"
     static let nativeDeviceCoreInjectionSelfCheckArgument = "--v3-self-check-native-device-core-injection"
-    static let tunnelLogSelfCheckArgument = "--v3-self-check-tunnel-log-parser"
-    static let injectionTransportSelfCheckArgument = "--v3-self-check-injection-transport"
     static let agentProtocolVersionSelfCheckArgument = "--v3-self-check-agent-protocol-version"
 
     static func runIfNeeded(
@@ -50,26 +48,6 @@ enum V3DeviceAgentEntrypoint {
 
         if arguments.contains(nativeDeviceCoreInjectionSelfCheckArgument) {
             let report = StubDeviceAgentService.runNativeDeviceCoreInjectionSelfCheckReport()
-            let status: Int32 = report.contains("\nFAIL ") ? 1 : 0
-            let target = status == 0 ? stdout : stderr
-            if let data = report.data(using: .utf8) {
-                try? target.write(contentsOf: data)
-            }
-            Darwin.exit(status)
-        }
-
-        if arguments.contains(tunnelLogSelfCheckArgument) {
-            let report = StubDeviceAgentService.runExpectedRSDEndpointSelfCheckReport()
-            let status: Int32 = report.contains("\nFAIL ") ? 1 : 0
-            let target = status == 0 ? stdout : stderr
-            if let data = report.data(using: .utf8) {
-                try? target.write(contentsOf: data)
-            }
-            Darwin.exit(status)
-        }
-
-        if arguments.contains(injectionTransportSelfCheckArgument) {
-            let report = StubDeviceAgentService.runInjectionTransportSelfCheckReport()
             let status: Int32 = report.contains("\nFAIL ") ? 1 : 0
             let target = status == 0 ? stdout : stderr
             if let data = report.data(using: .utf8) {
