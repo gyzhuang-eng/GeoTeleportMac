@@ -659,6 +659,9 @@ struct ContentView: View {
                 Text("\(diagnostics.lines.count)/\(diagnostics.maxLines)")
                     .font(.system(size: 9, design: .monospaced))
                     .foregroundColor(.secondary.opacity(0.6))
+                Button(action: { exportDiagnostics() }) {
+                    Image(systemName: "square.and.arrow.up").font(.system(size: 10)).foregroundColor(accentBlue)
+                }.buttonStyle(.plain)
                 Button(action: { diagnostics.clear() }) {
                     Image(systemName: "trash").font(.system(size: 10)).foregroundColor(.secondary)
                 }.buttonStyle(.plain)
@@ -764,6 +767,59 @@ struct ContentView: View {
         let os = ProcessInfo.processInfo.operatingSystemVersionString
         log("[SYS] Host: \(host)")
         log("[SYS] OS: \(os)")
+    }
+
+    func exportDiagnostics() {
+        let sessionLines = V3SessionDiagnostics.diagnosticLines(
+            backendTrack: appModel.backendTrack,
+            availability: appModel.backendAvailability,
+            capabilities: appModel.backendCapabilities,
+            snapshot: appModel.deviceSnapshot,
+            tunnelState: appModel.tunnelState,
+            sessionState: appModel.sessionState,
+            health: appModel.connectionHealth,
+            blocker: appModel.sessionBlocker,
+            readinessGate: appModel.readinessGate,
+            deviceProbeFocus: appModel.effectiveDeviceProbeFocus,
+            availabilityAssessment: appModel.availabilityAssessment,
+            deviceAssessment: appModel.deviceAssessment,
+            tunnelAssessment: appModel.tunnelAssessment,
+            lastLocationCommandRecord: appModel.lastLocationCommandRecord
+        )
+
+        var content = "GeoTeleport Diagnostics\n"
+        content += "======================\n"
+        content += "Date: \(ISO8601DateFormatter().string(from: Date()))\n"
+        content += "Host: \(ProcessInfo.processInfo.hostName)\n"
+        content += "OS: \(ProcessInfo.processInfo.operatingSystemVersionString)\n\n"
+        content += "--- Session State ---\n"
+        content += sessionLines.joined(separator: "\n")
+        content += "\n\n--- Debug Log (\(diagnostics.lines.count) lines) ---\n"
+        content += diagnostics.lines.joined(separator: "\n")
+        content += "\n"
+
+        let panel = NSSavePanel()
+        panel.title = "Export Diagnostics"
+        panel.nameFieldStringValue = "GeoTeleport_Diagnostics_\(formattedDateForFilename()).txt"
+        panel.allowedFileTypes = ["txt"]
+        panel.canCreateDirectories = true
+
+        panel.begin { response in
+            if response == .OK, let url = panel.url {
+                do {
+                    try content.write(to: url, atomically: true, encoding: .utf8)
+                    self.log("[EXPORT] Diagnostics saved to \(url.lastPathComponent)")
+                } catch {
+                    self.log("[EXPORT] Failed to save: \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+
+    private func formattedDateForFilename() -> String {
+        let f = DateFormatter()
+        f.dateFormat = "yyyyMMdd_HHmmss"
+        return f.string(from: Date())
     }
 
     private func currentSessionState() -> DeviceSessionState {

@@ -900,3 +900,9 @@ without trawling git history.
    `V3LegacyCLIPathResolver` retained (used by `EndpointBackedInjectionTransportCommandAdapter`
    and `ProductOwnedTunnelStateController` for the pymobiledevice3 fallback path).
    Build succeeds; all 25 non-hardware self-check cases pass.
+- **2026-04-25 — Phase D: diagnostics export.** "Export" button added to the debug
+   log panel. Uses `NSSavePanel` to let users save a `GeoTeleport_Diagnostics_*.txt`
+   file containing: host/OS info, full `V3SessionDiagnostics` session state dump
+   (backend track, session state, health, readiness gate, all three assessment
+   layers with blocker codes, tunnel state, injection transport, last location
+   command record), and the complete debug log. No Terminal required.
