@@ -668,6 +668,29 @@ struct ContentView: View {
             }
             .padding(.horizontal, 12).padding(.top, 8).padding(.bottom, 4)
 
+            HStack(spacing: 6) {
+                Image(systemName: V3TelemetryStore.shared.isOptedIn ? "antenna.radiowaves.left.and.right" : "antenna.radiowaves.left.and.right.slash")
+                    .font(.system(size: 9))
+                    .foregroundColor(V3TelemetryStore.shared.isOptedIn ? accentBlue : .secondary.opacity(0.4))
+                Toggle("Telemetry", isOn: Binding(
+                    get: { V3TelemetryStore.shared.isOptedIn },
+                    set: { V3TelemetryStore.shared.isOptedIn = $0 }
+                ))
+                .toggleStyle(.checkbox)
+                .font(.system(size: 9))
+                .foregroundColor(.secondary)
+                Spacer()
+                if V3TelemetryStore.shared.hasEntries() {
+                    Text("\(V3TelemetryStore.shared.telemetryContent().split(separator: "\n").count) events")
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundColor(.secondary.opacity(0.6))
+                    Button(action: { V3TelemetryStore.shared.clear() }) {
+                        Image(systemName: "trash").font(.system(size: 9)).foregroundColor(.secondary)
+                    }.buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 12).padding(.bottom, 4)
+
             ScrollViewReader { proxy in
                 ScrollView {
                     Text(diagnostics.lines.joined(separator: "\n"))
@@ -796,6 +819,13 @@ struct ContentView: View {
         content += sessionLines.joined(separator: "\n")
         content += "\n\n--- Debug Log (\(diagnostics.lines.count) lines) ---\n"
         content += diagnostics.lines.joined(separator: "\n")
+        content += "\n\n--- Telemetry (device-core events) ---\n"
+        let telemetry = V3TelemetryStore.shared.telemetryContent()
+        if telemetry.isEmpty {
+            content += "(telemetry opt-in: \(V3TelemetryStore.shared.isOptedIn ? "enabled, no events" : "disabled"))\n"
+        } else {
+            content += telemetry
+        }
         content += "\n"
 
         let panel = NSSavePanel()

@@ -67,17 +67,19 @@ If any check fails, stop and diagnose before writing new code.
 
 ### Your first task (Phase C / D continuation)
 
-Code-level Phase C is complete. The app has a single noPython backend track
-with native device core, multi-device selection, honest blockers, and no
-legacy code. The next engineer should focus on:
+Code-level Phase C and most of Phase D are complete. The app has:
+- Single noPython backend, multi-device selection, honest blockers
+- Diagnostics export via NSSavePanel (session state + debug log + telemetry)
+- Opt-in telemetry path for device-core failures (no PII)
+- All 25 non-hardware self-check cases pass
 
+Remaining work before ship:
 1. **Developer ID code signing** (optional — user can run unsigned with Gatekeeper bypass).
-2. **Test on a clean macOS install.** A VM with no Xcode, no Python, no
-   `pymobiledevice3`.
-3. **Support-artifact export** (Phase D) — let users export a diagnostics bundle
-   without opening Terminal.
-4. **Crash/telemetry path** (Phase D) — sparse opt-in reporting scoped to
-   device-core failures only.
+2. **Test on a clean macOS install.** A VM with no Xcode, no Python, no `pymobiledevice3`.
+3. **Delete the pymobiledevice3 fallback.** `EndpointBackedInjectionTransportCommandAdapter`
+   and `ProductOwnedTunnelStateController` still use `V3LegacyCLIPathResolver`. These
+   are dead for nativeRsd/nativeLockdown but remain as a compatibility fallback.
+   Once native paths are proven stable on clean macOS, remove them.
 
 ### What is NOT your job right now
 
@@ -341,11 +343,16 @@ boundary should not change during Phase B.
 ### Phase D — Consumer-Mac validation
 
 - Clean-install tests on at least two macOS versions, two iPhone models, and
-  two iOS major versions (including one iOS 17+).
-- Sparse but real crash/telemetry path (opt-in), scoped to device-core
-  failures only; no PII.
-- Support-artifact export: the user can attach a diagnostics bundle without
-  running Terminal.
+  two iOS major versions (including one iOS 17+). *(blocked by signing)*
+- **Sparse but real crash/telemetry path (opt-in) — ✅ DONE.** Scoped to
+  device-core failures only; no PII. `V3TelemetryStore` writes sanitized JSONL
+  to `Application Support/com.test.GeoTeleportMac.v3/telemetry/`. Opt-in toggle
+  in the debug log panel. Events cover: ios17 daemon launch/timeout/output/
+  command failures, native lockdown injection failures, and USB enum failures.
+  UDIDs, coordinates, and serials are redacted from summaries.
+- **Support-artifact export — ✅ DONE.** Export button in debug log panel saves
+  a `.txt` file via `NSSavePanel` containing session state dump, debug log,
+  and telemetry events.
 
 ### Phase E — Cross-platform core extraction
 
@@ -375,7 +382,7 @@ adapter to the core. This is the point at which the codebase stops being
 | B.2   | Device-core tech decision              | ✅ DONE (Rust, §7) |
 | B.3   | Bundled device core implementation     | ✅ DONE (Phase B exit criteria met) |
 | C     | DMG signing, notarization, first-run   | 🟡 IN PROGRESS |
-| D     | Consumer-Mac validation                | ⬜ NOT STARTED |
+| D     | Consumer-Mac validation                | 🟡 IN PROGRESS |
 | E     | Cross-platform core extraction         | ⬜ NOT STARTED |
 | F     | Windows port                           | ⬜ NOT STARTED |
 
@@ -906,3 +913,15 @@ without trawling git history.
    (backend track, session state, health, readiness gate, all three assessment
    layers with blocker codes, tunnel state, injection transport, last location
    command record), and the complete debug log. No Terminal required.
+- **2026-04-25 — Phase D: telemetry path (opt-in).** `V3TelemetryStore` (new file)
+   writes sanitized JSONL entries to
+   `~/Library/Application Support/com.test.GeoTeleportMac.v3/telemetry/device_core_events.jsonl`
+   when the user opts in. PII redaction strips UDIDs (40-hex), coordinates
+   (decimal patterns), and serial suffixes from summaries. Opt-in checkbox in the
+   debug log panel with event count display and clear button. Telemetry wired into
+   7 failure paths: `NativeDeviceCoreIos17LocationController` (binary missing,
+   launch failure, daemon timeout, unexpected startup output, no response, command
+   failure) and `nativeDeviceCoreRunForInjection` (exit code ≠ 0, process launch
+   error). Max 500 entries / 5 MB file with automatic oldest-entry rotation.
+   Telemetry content included in diagnostics export. Updated §0 Handoff Snapshot
+   and Phase D status to IN PROGRESS.

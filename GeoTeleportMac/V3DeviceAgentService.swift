@@ -1186,6 +1186,11 @@ private enum NativeDeviceCoreMetadataProbe {
         case .success(let text):
             return XcodeDeviceMetadataProbe.parseAttachedMobileDevices(from: text)
         case .failure(let failure):
+            V3TelemetryStore.shared.record(
+                type: .enumFailure,
+                summary: "native-device-core enumerate-ios-devices failed",
+                errorMessage: failure.message
+            )
             return .failure(
                 DeviceAgentFailure(
                     code: .agentUnavailable,
@@ -2034,6 +2039,12 @@ private func nativeDeviceCoreRunForInjection(
             let code: DeviceAgentErrorCode = status == 3
                 ? .transportUnimplemented
                 : .agentUnavailable
+            V3TelemetryStore.shared.record(
+                type: .injectionFailure,
+                summary: "native-device-core \(arguments.first ?? "?") failed",
+                exitCode: Int(status),
+                errorMessage: msg.isEmpty ? "exited with code \(status)" : msg
+            )
             return .failure(DeviceAgentFailure(
                 code: code,
                 message: msg.isEmpty ? "\(binaryPath) exited with code \(status)" : msg
@@ -2041,6 +2052,11 @@ private func nativeDeviceCoreRunForInjection(
         }
         return .success(())
     } catch {
+        V3TelemetryStore.shared.record(
+            type: .injectionFailure,
+            summary: "native-device-core process launch failed",
+            errorMessage: error.localizedDescription
+        )
         return .failure(DeviceAgentFailure(code: .agentUnavailable, message: error.localizedDescription))
     }
 }
@@ -4279,6 +4295,11 @@ final class NativeDeviceCoreIos17LocationController {
 
     private func startSession(udid: String) -> Result<Void, DeviceAgentFailure> {
         guard let binaryPath = NativeDeviceCoreMetadataProbe.resolveBinaryPath() else {
+            V3TelemetryStore.shared.record(
+                type: .ios17DaemonLaunchFailure,
+                summary: "ios17-location-daemon: binary not built",
+                errorMessage: "native device-core binary not found"
+            )
             return .failure(DeviceAgentFailure(
                 code: .agentUnavailable,
                 message: "ios17-location-daemon: native device-core binary is not built."
@@ -4297,6 +4318,11 @@ final class NativeDeviceCoreIos17LocationController {
         do {
             try process.run()
         } catch {
+            V3TelemetryStore.shared.record(
+                type: .ios17DaemonLaunchFailure,
+                summary: "ios17-location-daemon: process failed to launch",
+                errorMessage: error.localizedDescription
+            )
             return .failure(DeviceAgentFailure(
                 code: .agentUnavailable,
                 message: "ios17-location-daemon: failed to launch for \(udid): \(error.localizedDescription)"
@@ -4313,6 +4339,11 @@ final class NativeDeviceCoreIos17LocationController {
 
         guard let first = s.nextLine(timeout: 15) else {
             invalidate()
+            V3TelemetryStore.shared.record(
+                type: .ios17DaemonTimeout,
+                summary: "ios17-location-daemon: did not become ready within 15 s",
+                errorMessage: "Check USB connection and pairing"
+            )
             return .failure(DeviceAgentFailure(
                 code: .agentUnavailable,
                 message: "ios17-location-daemon: did not become ready within 15 s for \(udid). Check USB connection and pairing."
@@ -4320,6 +4351,11 @@ final class NativeDeviceCoreIos17LocationController {
         }
         guard first == "READY" else {
             invalidate()
+            V3TelemetryStore.shared.record(
+                type: .ios17DaemonUnexpectedOutput,
+                summary: "ios17-location-daemon: unexpected startup output",
+                errorMessage: first
+            )
             return .failure(DeviceAgentFailure(
                 code: .agentUnavailable,
                 message: "ios17-location-daemon: unexpected startup output for \(udid): \(first)"
@@ -4335,6 +4371,11 @@ final class NativeDeviceCoreIos17LocationController {
     ) -> Result<DeviceAgentTeleportResult, DeviceAgentFailure> {
         guard let response else {
             invalidate()
+            V3TelemetryStore.shared.record(
+                type: .ios17DaemonNoResponse,
+                summary: "ios17-location-daemon: no response to '\(op)'",
+                errorMessage: "process may have died"
+            )
             return .failure(DeviceAgentFailure(
                 code: .transportExecutionFailed,
                 message: "ios17-location-daemon: no response to '\(op)' on \(udid) (process may have died)."
@@ -4347,6 +4388,11 @@ final class NativeDeviceCoreIos17LocationController {
             ))
         }
         let detail = response.hasPrefix("ERROR: ") ? String(response.dropFirst(7)) : response
+        V3TelemetryStore.shared.record(
+            type: .ios17DaemonCommandFailure,
+            summary: "ios17-location-daemon: \(op) failed",
+            errorMessage: detail
+        )
         return .failure(DeviceAgentFailure(
             code: .transportExecutionFailed,
             message: "ios17-location-daemon: \(op) on \(udid) failed: \(detail)"
