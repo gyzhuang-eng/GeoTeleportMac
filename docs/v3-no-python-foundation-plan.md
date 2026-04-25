@@ -13,25 +13,26 @@ Last updated: **2026-04-25**. Branch: `v3/device-core-rust`.
 
 ### Where we are in 60 seconds
 
-B.1, B.2, and B.3 capabilities 1–4 are complete. The Rust binary
-(`native-device-core`) can enumerate USB devices, fetch device info via
-lockdown, set/clear location on iOS ≤ 16 via the lockdown simulate-location
-service, and set/clear location on iOS 17+ via a persistent DVT daemon
-(`ios17-location-daemon`). The Swift lifecycle controller
-(`NativeDeviceCoreIos17LocationController`) is wired into
-`NoPythonBackendStub`; iOS 17+ teleport calls bypass the single-shot agent
-entirely and go through the daemon.
+B.1, B.2, and B.3 are complete. The Rust binary (`native-device-core`) handles
+USB enumeration, lockdown device info, iOS ≤ 16 simulate-location, and iOS 17+
+persistent DVT daemon (`ios17-location-daemon`) managed by
+`NativeDeviceCoreIos17LocationController` in the main app process. **Phase B
+exit criteria are fully met.**
 
-**Phase B is complete.** The `TEMPORARY_CLI_BRIDGE` is dead for nativeRsd and
-nativeLockdown paths. Phase C: Hardened Runtime enabled,
-`GeoTeleportMac.entitlements` created, `resolveBinaryPath` updated for bundled
-DMG lookup, first-run UX messaging improved for locked/untrusted devices.
-**Multi-device selection UI is complete** (`DevicePickerSheet`, `selectedDeviceUDID`
-with UserDefaults persistence, `GTM_PREFERRED_DEVICE_UDID` env-var bridging,
-`availableDevices` wired through `DeviceSnapshot`). **Honest blockers**
-(`xcodeToolchainMissing`, `pymobiledevice3Missing`, `bundledDeviceCoreMissing`)
-are fully wired into `V3AppModel` state transitions and the status card.
-**Developer Mode guidance** now appears in `readinessSummary` for iOS 16+ devices.
+Phase C code-level work is done:
+- Hardened Runtime enabled, entitlements created, Rust binary bundled at
+  `Contents/Helpers/`.
+- **Multi-device selection UI** — `DevicePickerSheet`, `selectedDeviceUDID`
+  (UserDefaults), `GTM_PREFERRED_DEVICE_UDID` env-var bridging.
+- **Honest blockers** — `xcodeToolchainMissing`, `pymobiledevice3Missing`,
+  `bundledDeviceCoreMissing` fully wired.
+- **Developer Mode guidance** for iOS 16+ in `readinessSummary`.
+- **XCTest harness deleted** — `XcodeTestLocationInjectionTransportAdapter`,
+  `XcodeLocationHarnessPackage`, and the harness self-check are gone.
+- **Legacy backend deleted** — `legacyPreview` track, `V3LegacyCLIBackend`,
+  `V3LegacyDeviceTransport`, `V3LegacyLocationTransport`, `V3TunnelLauncher`
+  (Terminal AppleScript), tunnel banner, and all compatibility-message branches
+  removed. Only `noPythonStub` remains.
 
 **Remaining Phase C work:**
 - Obtain a Developer ID Application certificate and sign the app + helper binary.
@@ -64,26 +65,19 @@ APP=$(find ~/Library/Developer/Xcode/DerivedData -name "GeoTeleportMacV3" \
 
 If any check fails, stop and diagnose before writing new code.
 
-### Your first task (Phase C continuation)
+### Your first task (Phase C / D continuation)
 
-Phase C is well advanced. Code-level work remaining is minimal; the next
-engineer should focus on signing and validation:
+Code-level Phase C is complete. The app has a single noPython backend track
+with native device core, multi-device selection, honest blockers, and no
+legacy code. The next engineer should focus on:
 
-1. **Developer ID code signing.** Obtain or select a Developer ID Application
-   certificate in Xcode (Account → Manage Certificates). Then archive and
-   export a signed `.app`, wrap it in a `.dmg`, and notarize + staple with
-   `notarytool`.
+1. **Developer ID code signing** (optional — user can run unsigned with Gatekeeper bypass).
 2. **Test on a clean macOS install.** A VM with no Xcode, no Python, no
-   `pymobiledevice3`. The app must self-contain everything it needs.
-3. **Drop the legacy code paths.** Delete `XcodeTestLocationInjectionTransportAdapter`,
-   `XcodeLocationHarnessPackage` (embedded source strings), and the `--v3-self-check-xcode-location-harness`
-   self-check. This is gated behind `V3_DEV_ENABLE_XCTEST_HARNESS=1` and is
-   not user-reachable. Also delete the `legacyPreview` backend track and its
-   Terminal/AppleScript code paths.
-
-The hard machinery (Rust binary bundled at `Contents/Helpers/`, Hardened
-Runtime enabled, distribution entitlements set, bundle path lookup working)
-is all done.
+   `pymobiledevice3`.
+3. **Support-artifact export** (Phase D) — let users export a diagnostics bundle
+   without opening Terminal.
+4. **Crash/telemetry path** (Phase D) — sparse opt-in reporting scoped to
+   device-core failures only.
 
 ### What is NOT your job right now
 
@@ -886,6 +880,23 @@ without trawling git history.
    (3) **Developer Mode UX**: `readinessSummary` in `makeDeviceAssessment` now
    appends "Ensure Developer Mode is enabled on your iPhone (Settings → Privacy
    & Security → Developer Mode)." for iOS 16+ devices with resolved metadata.
-   (4) Phase C status card blocker messages updated (Xcode Toolchain Missing,
-   pymobiledevice3 Missing, Bundled Device Core Missing).
    All 25 non-hardware self-check cases pass. Updated §0 Handoff Snapshot.
+- **2026-04-25 — Phase C cleanup: XCTest harness and legacy backend deleted.**
+   **XCTest harness** (`XcodeTestLocationInjectionTransportAdapter`,
+   `XcodeLocationHarnessPackage`, `XcodeHarnessBuildSelfCheckResult`,
+   `runXcodeLocationHarnessSelfCheckReport`, `--v3-self-check-xcode-location-harness`,
+   `V3_DEV_ENABLE_XCTEST_HARNESS` guard) fully removed from `V3DeviceAgentService.swift`
+   and `V3DeviceAgentEntrypoint.swift` (680 lines deleted).
+   **Legacy backend** (`V3LegacyCLIBackend.swift`, `V3LegacyDeviceTransport.swift`,
+   `V3LegacyLocationTransport.swift`, `V3LegacyDiagnostics.swift`,
+   `V3TunnelLauncher.swift`) deleted. `BackendTrack.legacyPreview` enum case
+   removed; `V3BackendProvider` simplified to single `noPythonStub` path.
+   `V3RuntimeCoordinator` — removed `resolvedCLIPath` field and
+   `LegacyCLIBackend` cast. `V3AppModel` — removed `resolvedCLIPath` property
+   and all `.legacyPreview` default parameter values. `ContentView` — removed
+   `tunnelLauncher`, `tunneldBanner`, `launchTunneldInTerminal`,
+   `showsLegacyTunnelBanner`, `tunneldCommand`, `detectedCliPath`,
+   `tunneldHintDismissed`, and all legacyPreview guard branches.
+   `V3LegacyCLIPathResolver` retained (used by `EndpointBackedInjectionTransportCommandAdapter`
+   and `ProductOwnedTunnelStateController` for the pymobiledevice3 fallback path).
+   Build succeeds; all 25 non-hardware self-check cases pass.

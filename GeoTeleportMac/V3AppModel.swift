@@ -25,7 +25,6 @@ final class V3AppModel: ObservableObject {
         canObserveTunnel: false,
         canInjectLocation: false
     )
-    @Published var resolvedCLIPath: String = ""
     @Published var deviceSnapshot = DeviceSnapshot(
         isConnected: false,
         connectionSummary: "INITIALIZING...",
@@ -619,7 +618,7 @@ final class V3AppModel: ObservableObject {
         capabilities: BackendCapabilities,
         snapshot: DeviceSnapshot,
         tunnelState: TunnelState,
-        backendTrack: BackendTrack = .legacyPreview,
+        backendTrack: BackendTrack = .noPythonStub,
         deviceAssessment: DeviceAgentSessionAssessment? = nil,
         tunnelAssessment: DeviceAgentSessionAssessment? = nil
     ) -> DeviceSessionState {
@@ -695,7 +694,7 @@ final class V3AppModel: ObservableObject {
 
     static func deriveConnectionHealth(
         for sessionState: DeviceSessionState,
-        backendTrack: BackendTrack = .legacyPreview,
+        backendTrack: BackendTrack = .noPythonStub,
         availabilityAssessment: DeviceAgentAvailability? = nil,
         deviceAssessment: DeviceAgentSessionAssessment? = nil,
         tunnelAssessment: DeviceAgentSessionAssessment? = nil
@@ -768,7 +767,7 @@ final class V3AppModel: ObservableObject {
 
     nonisolated static func deriveSessionBlocker(
         for sessionState: DeviceSessionState,
-        backendTrack: BackendTrack = .legacyPreview,
+        backendTrack: BackendTrack = .noPythonStub,
         availabilityAssessment: DeviceAgentAvailability? = nil,
         deviceAssessment: DeviceAgentSessionAssessment? = nil,
         tunnelAssessment: DeviceAgentSessionAssessment? = nil
@@ -922,7 +921,7 @@ final class V3AppModel: ObservableObject {
     nonisolated static func guidance(
         for sessionState: DeviceSessionState,
         snapshot: DeviceSnapshot,
-        backendTrack: BackendTrack = .legacyPreview,
+        backendTrack: BackendTrack = .noPythonStub,
         readinessGate: SessionReadinessGate? = nil,
         deviceProbeFocus: DeviceProbeFocus? = nil,
         availabilityAssessment: DeviceAgentAvailability? = nil,
@@ -994,7 +993,7 @@ final class V3AppModel: ObservableObject {
         _ health: ConnectionHealth,
         sessionState: DeviceSessionState,
         blocker: SessionBlocker,
-        backendTrack: BackendTrack = .legacyPreview,
+        backendTrack: BackendTrack = .noPythonStub,
         availabilityAssessment: DeviceAgentAvailability? = nil,
         deviceAssessment: DeviceAgentSessionAssessment? = nil,
         tunnelAssessment: DeviceAgentSessionAssessment? = nil
@@ -1053,7 +1052,7 @@ final class V3AppModel: ObservableObject {
         availability: BackendAvailability,
         sessionState: DeviceSessionState,
         blocker: SessionBlocker,
-        backendTrack: BackendTrack = .legacyPreview,
+        backendTrack: BackendTrack = .noPythonStub,
         capabilities: BackendCapabilities,
         availabilityAssessment: DeviceAgentAvailability? = nil,
         deviceAssessment: DeviceAgentSessionAssessment? = nil,
@@ -1176,7 +1175,7 @@ final class V3AppModel: ObservableObject {
 
     nonisolated static func summarizeReadinessGate(
         _ gate: SessionReadinessGate,
-        backendTrack: BackendTrack = .legacyPreview,
+        backendTrack: BackendTrack = .noPythonStub,
         sessionBlocker: SessionBlocker,
         deviceAssessment: DeviceAgentSessionAssessment? = nil
     ) -> String {
@@ -1664,7 +1663,6 @@ final class V3AppModel: ObservableObject {
             canObserveTunnel: false,
             canInjectLocation: false
         )
-        resolvedCLIPath = ""
         deviceSnapshot = DeviceSnapshot(
             isConnected: false,
             connectionSummary: "INITIALIZING...",

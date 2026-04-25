@@ -1,7 +1,6 @@
 import Foundation
 
 enum BackendTrack: String, CaseIterable {
-    case legacyPreview
     case noPythonStub
 
     static var primaryTrack: BackendTrack { .noPythonStub }
@@ -9,8 +8,6 @@ enum BackendTrack: String, CaseIterable {
 
     nonisolated var displayName: String {
         switch self {
-        case .legacyPreview:
-            return "Compatibility Preview"
         case .noPythonStub:
             return "Device Agent"
         }
@@ -18,8 +15,6 @@ enum BackendTrack: String, CaseIterable {
 
     nonisolated var shortLabel: String {
         switch self {
-        case .legacyPreview:
-            return "COMPAT"
         case .noPythonStub:
             return "AGENT"
         }

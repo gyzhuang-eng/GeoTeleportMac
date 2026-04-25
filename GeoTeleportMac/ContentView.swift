@@ -180,7 +180,6 @@ struct ContentView: View {
     @StateObject private var statusStore = V3StatusStore()
     @AppStorage("v3.backendTrack") private var backendTrackRaw: String = BackendTrack.primaryTrack.rawValue
     private let backendProvider = V3BackendProvider()
-    private let tunnelLauncher = V3TunnelLauncher()
     private var activeBackend: DeviceBackend { backendProvider.backend(for: activeBackendTrack) }
     private var runtimeCoordinator: V3RuntimeCoordinator {
         V3RuntimeCoordinator(backend: activeBackend)
@@ -194,8 +193,6 @@ struct ContentView: View {
     @State private var isWorking: Bool = false
     @State private var isScanningDeps: Bool = false
 
-    @State private var tunneldHintDismissed: Bool = false
-
     private var activeBackendTrack: BackendTrack {
         guard let track = BackendTrack(rawValue: backendTrackRaw),
               BackendTrack.userSelectableCases.contains(track) else {
@@ -207,28 +204,11 @@ struct ContentView: View {
     private var isDeviceConnected: Bool { appModel.isDeviceConnected }
     private var hardwareStatusTitle: String { appModel.hardwareStatusTitle }
     private var connectionStatusText: String { appModel.connectionStatusText }
-    private var detectedCliPath: String { appModel.resolvedCLIPath }
     private var isEnvironmentReady: Bool { appModel.isEnvironmentReady }
     private var deviceIOSVersion: String { appModel.deviceIOSVersion }
     private var deviceIOSMajor: Int { appModel.deviceIOSMajor }
     private var tunneldRunning: Bool { appModel.tunneldRunning }
     private var needsTunneld: Bool { appModel.needsTunnel }
-    private var showsLegacyTunnelBanner: Bool {
-        activeBackendTrack == .legacyPreview &&
-        isDeviceConnected &&
-        deviceIOSMajor >= 17 &&
-        !tunneldRunning &&
-        !tunneldHintDismissed
-    }
-
-    // 组装 tunnel 命令：优先用已检测到的兼容桥接器绝对路径，避免依赖 shell 默认解析。
-    private var tunneldCommand: String {
-        if !detectedCliPath.isEmpty {
-            let cliPath = detectedCliPath
-            return "sudo \(cliPath) remote tunneld"
-        }
-        return "sudo remote tunneld"
-    }
 
     @State private var showDebugLog: Bool = false
     @State private var showDevicePicker: Bool = false
@@ -360,13 +340,7 @@ struct ContentView: View {
                 .padding(.horizontal, 15)
                 .padding(.top, 12)
 
-                // 1b. iOS 17+ tunnel 提示横幅（tunnel 跑起来后自动收起）
-                if showsLegacyTunnelBanner {
-                    tunneldBanner
-                        .padding(.horizontal, 15)
-                }
-
-                // 1c. 多设备选择横幅
+                // 1b. 多设备选择横幅
                 if appModel.sessionState == .multipleDevices && !appModel.availableDevices.isEmpty {
                     multipleDevicesBanner
                         .padding(.horizontal, 15)
@@ -724,84 +698,6 @@ struct ContentView: View {
         }
     }
 
-    // iOS 17+ tunnel 提示横幅
-    private var tunneldBanner: some View {
-        let cmd = tunneldCommand
-        return HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 14))
-                .foregroundColor(.yellow)
-                .padding(.top, 2)
-            VStack(alignment: .leading, spacing: 4) {
-                    Text("iOS \(deviceIOSVersion) detected — tunnel required")
-                        .font(.system(size: 11, weight: .bold, design: .monospaced))
-                        .foregroundColor(.primary)
-                Text("Compatibility mode still needs a manual tunnel handoff. Start it once and keep the terminal window open:")
-                    .font(.system(size: 10))
-                    .foregroundColor(.secondary)
-                HStack(spacing: 6) {
-                    Text(cmd)
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundColor(terminalGreen)
-                        .textSelection(.enabled)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                    Button {
-                        tunnelLauncher.copyToPasteboard(cmd)
-                        log("[HINT] Copied tunnel command to clipboard")
-                    } label: {
-                        Image(systemName: "doc.on.doc")
-                            .font(.system(size: 10))
-                            .foregroundColor(accentBlue)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Copy command")
-                    Button {
-                        launchTunneldInTerminal(cmd: cmd)
-                    } label: {
-                        HStack(spacing: 3) {
-                            Image(systemName: "terminal.fill").font(.system(size: 10))
-                            Text("Launch").font(.system(size: 9, weight: .semibold, design: .monospaced))
-                        }
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 7).padding(.vertical, 3)
-                        .background(Capsule().fill(accentBlue.opacity(0.85)))
-                    }
-                    .buttonStyle(.plain)
-                    .help("Open the terminal and run the command")
-                }
-                .padding(.horizontal, 8).padding(.vertical, 5)
-                .background(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(Color.black.opacity(0.35))
-                )
-            }
-            Spacer()
-            Button {
-                tunneldHintDismissed = true
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(.secondary)
-            }
-            .buttonStyle(.plain)
-            .help("Dismiss")
-        }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(.regularMaterial)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(Color.yellow.opacity(0.08))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .strokeBorder(Color.yellow.opacity(0.45), lineWidth: 1)
-                )
-        )
-     }
-
     // MARK: - Multiple devices banner
 
     private var multipleDevicesBanner: some View {
@@ -844,33 +740,6 @@ struct ContentView: View {
                         .strokeBorder(accentBlue.opacity(0.40), lineWidth: 1)
                 )
         )
-    }
-
-    // 一键打开终端并运行 tunnel 命令（只差用户输 sudo 密码）
-    private func launchTunneldInTerminal(cmd: String) {
-        switch tunnelLauncher.launchInTerminal(command: cmd) {
-        case .failed(let message):
-            log("[TERMINAL] ❌ Failed to launch: \(message)")
-            setStatus(.failure("Couldn't open tunnel terminal", "Run the command manually — it's copied to your clipboard."))
-            tunnelLauncher.copyToPasteboard(cmd)
-        case .launched:
-            log("[TERMINAL] ✅ Launched terminal with tunnel command")
-            setStatus(.working("Waiting for tunnel…", "Enter your Mac password in the terminal window that just opened."))
-
-            // 12 秒看门狗：如果这期间 tunnel 始终没起来，很可能是兼容桥接器
-            // 自己在终端里崩了。
-            DispatchQueue.main.asyncAfter(deadline: .now() + 12) {
-                if !self.tunneldRunning,
-                   case .working(let title, _) = self.statusStore.status,
-                   title.lowercased().contains("tunnel") {
-                    self.log("[TERMINAL] ⚠️ 12s elapsed, tunnel still down — likely transport issue")
-                    self.setStatus(.failure(
-                        "Tunnel didn't start",
-                        "Check the terminal window. If the compatibility transport crashed, the tunnel session never came up."
-                    ))
-                }
-            }
-        }
     }
 
     // MARK: - 逻辑
@@ -1029,17 +898,11 @@ struct ContentView: View {
         if version != (previousSnapshot.iosVersion ?? ""), !version.isEmpty {
             self.log("[DEVICE] iOS \(version) detected")
             if major >= 17 {
-                if activeBackendTrack == .legacyPreview {
-                    self.log("[DEVICE] ⚠️ iOS 17+ requires tunnel startup — see banner")
-                } else {
-                    self.log("[DEVICE] Tunnel requirement is now tracked through device-agent session state")
-                }
+                self.log("[DEVICE] Tunnel requirement is now tracked through device-agent session state")
             }
         }
 
-        if !snapshot.isConnected {
-            self.tunneldHintDismissed = false
-        } else if becameConnected && self.isEnvironmentReady && version.isEmpty {
+        if becameConnected && self.isEnvironmentReady && version.isEmpty {
             self.log("[DEVICE] Connected, waiting for version info...")
         }
 
@@ -1173,7 +1036,6 @@ struct ContentView: View {
                 let previousHealth = self.currentConnectionHealth()
                 self.appModel.backendAvailability = result.availability
                 self.appModel.backendCapabilities = result.capabilities
-                self.appModel.resolvedCLIPath = result.resolvedCLIPath
                 self.appModel.availabilityAssessment = result.availabilityAssessment
                 self.isScanningDeps = false
                 nextRefreshScope = self.appModel.effectiveRefreshScope
@@ -1205,7 +1067,6 @@ struct ContentView: View {
         backendTrackRaw = track.rawValue
         appModel.backendTrack = track
         appModel.resetRuntimeState()
-        tunneldHintDismissed = false
         diagnostics.append("[BACKEND] Switched to \(track.displayName)")
         setStatus(.idle)
         performInitialRefresh()
@@ -1264,7 +1125,6 @@ struct ContentView: View {
                 "iOS \(deviceIOSVersion) tunnel isn't running",
                 action.tunnelAbortSubtitle(deviceIOSVersion: deviceIOSVersion)
             ))
-            tunneldHintDismissed = false
             return
         }
 
@@ -1323,25 +1183,9 @@ struct ContentView: View {
         backend: DeviceBackend,
         command: @escaping () -> Result<LocationCommandExecution, BackendFailure>
     ) {
-        if backend.track == .legacyPreview && detectedCliPath.isEmpty {
-            log("[ERROR] Abort: CLI Path is empty.")
-            setStatus(.failure(action.failureTitle, "Compatibility transport helper missing."))
-            return
-        }
-
         isWorking = true
         DispatchQueue.global(qos: .userInitiated).async {
-            self.log("[SYS] Spawning Child Process for \(action.operationLabel)...")
-
-            if !self.detectedCliPath.isEmpty {
-                self.log("[SYS] Executable: \(self.detectedCliPath)")
-                if backend.track == .legacyPreview {
-                    self.log("[SYS] Arguments: \(action.legacyArguments(latitude: self.latitude, longitude: self.longitude))")
-                    self.log("[SYS] ENV: LANG=en_US.UTF-8 set.")
-                }
-            } else {
-                self.log("[SYS] Executable path is managed by the active backend transport")
-            }
+            self.log("[SYS] Executing \(action.operationLabel) via device-agent transport...")
 
             if ProcessInfo.processInfo.environment["XCODE_RUNNING_FOR_PREVIEWS"] == "1" {
                 Thread.sleep(forTimeInterval: 0.5)

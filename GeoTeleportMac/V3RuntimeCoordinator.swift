@@ -3,7 +3,6 @@ import Foundation
 struct DependencyRefreshResult {
     let availability: BackendAvailability
     let capabilities: BackendCapabilities
-    let resolvedCLIPath: String
     let availabilityAssessment: DeviceAgentAvailability?
     let logLines: [String]
 
@@ -74,12 +73,6 @@ struct V3RuntimeCoordinator {
 
     func refreshDependencies() -> DependencyRefreshResult {
         let availability = backend.probeAvailability()
-        let resolvedCLIPath: String
-        if let legacyBackend = backend as? LegacyCLIBackend {
-            resolvedCLIPath = legacyBackend.resolvedCLIPath() ?? ""
-        } else {
-            resolvedCLIPath = ""
-        }
 
         var logLines: [String] = [
             "------------------------------------------",
@@ -88,34 +81,23 @@ struct V3RuntimeCoordinator {
             "[BACKEND] Capabilities: \(backend.capabilities.summary)"
         ]
 
-        if !resolvedCLIPath.isEmpty {
-            logLines.append("[SCAN] ✅ FOUND executable: \(resolvedCLIPath)")
-        } else if backend.track == .noPythonStub {
-            logLines.append("[BACKEND] Device-agent runtime selected")
-            if let noPythonBackend = backend as? NoPythonBackendStub {
-                let probe = noPythonBackend.availabilityProbe()
-                if let summary = probe.availability.summary, !summary.isEmpty {
-                    logLines.append("[BACKEND] \(summary)")
-                }
-                if let assessment = probe.assessment {
-                    logLines.append("[BACKEND] Bootstrap gate: \(assessment.readinessGate.title)")
-                    logLines.append("[BACKEND] Bootstrap next: \(assessment.nextAction)")
-                    logLines.append("[BACKEND] Bootstrap confidence: \(assessment.confidence.uppercased())")
-                }
-                logLines.append(contentsOf: probe.events.map(\.logLine))
+        logLines.append("[BACKEND] Device-agent runtime selected")
+        if let noPythonBackend = backend as? NoPythonBackendStub {
+            let probe = noPythonBackend.availabilityProbe()
+            if let summary = probe.availability.summary, !summary.isEmpty {
+                logLines.append("[BACKEND] \(summary)")
             }
-            logLines.append("[BACKEND] Device probing plus Xcode-backed location transport scaffolding are available.")
-        } else {
-            logLines.append("------------------------------------------")
-            logLines.append("[INIT] CRITICAL FAILURE: compatibility device backend not found.")
-            logLines.append("[HELP] Compatibility transport is still using the current CLI bridge until the device-agent transport fully replaces it.")
-            logLines.append("------------------------------------------")
+            if let assessment = probe.assessment {
+                logLines.append("[BACKEND] Bootstrap gate: \(assessment.readinessGate.title)")
+                logLines.append("[BACKEND] Bootstrap next: \(assessment.nextAction)")
+                logLines.append("[BACKEND] Bootstrap confidence: \(assessment.confidence.uppercased())")
+            }
+            logLines.append(contentsOf: probe.events.map(\.logLine))
         }
 
         return DependencyRefreshResult(
             availability: availability,
             capabilities: backend.capabilities,
-            resolvedCLIPath: resolvedCLIPath,
             availabilityAssessment: (backend as? NoPythonBackendStub)?.availabilityProbe().assessment,
             logLines: logLines
         )
