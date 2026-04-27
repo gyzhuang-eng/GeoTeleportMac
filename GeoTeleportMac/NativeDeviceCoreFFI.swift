@@ -1,7 +1,9 @@
 import Foundation
 
-struct NativeDeviceCoreFFIError: Error {
+struct NativeDeviceCoreFFIError: LocalizedError {
     let message: String
+
+    var errorDescription: String? { message }
 }
 
 /// Thin Swift wrapper around the Rust native-device-core C FFI dynamic library.
@@ -74,6 +76,10 @@ enum NativeDeviceCoreFFI {
         }
         let result = String(cString: ptr)
         freeStringFn?(ptr)
+
+        if result.contains("\"error\"") {
+            throw NativeDeviceCoreFFIError(message: parseFFIError(result) ?? result)
+        }
         return result
     }
 

@@ -1,8 +1,8 @@
 mod core;
 
 use core::{
-    clear_location_core, device_info_core, enumerate_ios_devices_core, json_str,
-    set_location_core,
+    clear_location_core, device_info_core, enumerate_ios_devices_core, set_location_core,
+    CommandStatus, StatusResponse,
 };
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
@@ -19,14 +19,24 @@ fn from_c_str(ptr: *const c_char) -> String {
     if ptr.is_null() {
         return String::new();
     }
-    unsafe { CStr::from_ptr(ptr) }.to_string_lossy().into_owned()
+    unsafe { CStr::from_ptr(ptr) }
+        .to_string_lossy()
+        .into_owned()
 }
 
 macro_rules! ffi_ok {
     ($result:expr) => {
         match $result {
             Ok(s) => to_c_string(s),
-            Err(e) => to_c_string(format!(r#"{{"error":{}}}"#, json_str(&e))),
+            Err(e) => {
+                let resp = StatusResponse {
+                    status: CommandStatus::Error,
+                    error: Some(e),
+                };
+                to_c_string(serde_json::to_string(&resp).unwrap_or_else(|_| {
+                    r#"{"status":"error","error":"serialization failed"}"#.to_string()
+                }))
+            }
         }
     };
 }
@@ -53,11 +63,27 @@ pub extern "C" fn gte_set_location(
     let udid = from_c_str(udid);
     let lat: f64 = match from_c_str(lat).parse() {
         Ok(v) => v,
-        Err(e) => return to_c_string(format!(r#"{{"error":"invalid latitude: {e}"}}"#)),
+        Err(e) => {
+            let resp = StatusResponse {
+                status: CommandStatus::Error,
+                error: Some(format!("invalid latitude: {e}")),
+            };
+            return to_c_string(serde_json::to_string(&resp).unwrap_or_else(|_| {
+                r#"{"status":"error","error":"serialization failed"}"#.to_string()
+            }));
+        }
     };
     let lon: f64 = match from_c_str(lon).parse() {
         Ok(v) => v,
-        Err(e) => return to_c_string(format!(r#"{{"error":"invalid longitude: {e}"}}"#)),
+        Err(e) => {
+            let resp = StatusResponse {
+                status: CommandStatus::Error,
+                error: Some(format!("invalid longitude: {e}")),
+            };
+            return to_c_string(serde_json::to_string(&resp).unwrap_or_else(|_| {
+                r#"{"status":"error","error":"serialization failed"}"#.to_string()
+            }));
+        }
     };
     let rt = tokio::runtime::Runtime::new().unwrap();
     ffi_ok!(rt.block_on(set_location_core(&udid, lat, lon)))

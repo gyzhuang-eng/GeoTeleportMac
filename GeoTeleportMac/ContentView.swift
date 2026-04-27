@@ -3,6 +3,7 @@ import MapKit
 import CoreLocation
 import Combine
 import AppKit
+import UniformTypeIdentifiers
 
 // MARK: - V9.3 · Single-message status card · Collapsible debug log
 
@@ -223,8 +224,6 @@ struct ContentView: View {
     let terminalGreen = Color(red: 0.25, green: 0.9, blue: 0.5)
     let alertRed = Color(red: 1.0, green: 0.35, blue: 0.35)
 
-    let timer = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
-
     // 坐标校验
     private var latValue: Double? {
         guard let v = Double(latitude), v >= -90, v <= 90 else { return nil }
@@ -244,293 +243,275 @@ struct ContentView: View {
 
     var body: some View {
         ZStack {
-            LinearGradient(
-                colors: [
-                    Color(red: 0.09, green: 0.10, blue: 0.16),
-                    Color(red: 0.04, green: 0.05, blue: 0.08)
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
+            // 1. 全屏沉浸式地图底层
+            NativeMapView(region: $region) { newCenter in
+                self.latitude = String(format: "%.6f", newCenter.latitude)
+                self.longitude = String(format: "%.6f", newCenter.longitude)
+            }
             .edgesIgnoringSafeArea(.all)
-            .overlay(
+
+            // 中心准星 —— 悬浮在屏幕正中央
+            ZStack {
                 Circle()
-                    .fill(accentBlue.opacity(0.25))
-                    .frame(width: 320, height: 320)
-                    .blur(radius: 120)
-                    .offset(x: -120, y: -260)
-                    .allowsHitTesting(false)
-            )
-            .overlay(
+                    .stroke(Color.white.opacity(0.95), lineWidth: 2)
+                    .frame(width: 30, height: 30)
+                    .shadow(color: .black.opacity(0.55), radius: 3, x: 0, y: 1)
                 Circle()
-                    .fill(Color.purple.opacity(0.22))
-                    .frame(width: 280, height: 280)
-                    .blur(radius: 120)
-                    .offset(x: 140, y: 280)
-                    .allowsHitTesting(false)
-            )
+                    .fill(accentBlue)
+                    .frame(width: 8, height: 8)
+                    .shadow(color: accentBlue.opacity(0.9), radius: 6)
+                Image(systemName: "mappin")
+                    .font(.system(size: 22, weight: .bold))
+                    .foregroundColor(.red)
+                    .shadow(color: .black.opacity(0.6), radius: 3, x: 0, y: 2)
+                    .offset(y: -18)
+            }
+            .allowsHitTesting(false)
 
-            VStack(spacing: 10) {
-
-                // 1. 顶部状态栏
-                HStack(spacing: 8) {
-                    HStack(spacing: 8) {
-                        Image(systemName: isDeviceConnected ? "iphone.gen3" : "cable.connector.slash")
-                            .font(.system(size: 16, weight: .medium))
-                            .foregroundColor(isDeviceConnected ? terminalGreen : alertRed)
-
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(hardwareStatusTitle)
-                                .font(.system(size: 10, weight: .bold, design: .monospaced))
+            // 2. HUD 悬浮 UI 层
+            VStack(spacing: 0) {
+                // 顶部控制区
+                HStack(alignment: .top, spacing: 20) {
+                    // 左上角浮窗：设备与系统状态
+                    VStack(alignment: .leading, spacing: 12) {
+                        // 设备连接状态
+                        HStack(spacing: 10) {
+                            Image(systemName: isDeviceConnected ? "iphone.gen3" : "cable.connector.slash")
+                                .font(.system(size: 20, weight: .medium))
                                 .foregroundColor(isDeviceConnected ? terminalGreen : alertRed)
-                            Text(connectionStatusText)
-                                .font(.system(size: 8, design: .monospaced))
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(hardwareStatusTitle)
+                                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                                    .foregroundColor(isDeviceConnected ? terminalGreen : alertRed)
+                                Text(connectionStatusText)
+                                    .font(.system(size: 9, design: .monospaced))
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        .padding(.horizontal, 14).padding(.vertical, 10)
+                        .background(glassPanel(cornerRadius: 14).shadow(color: .black.opacity(0.3), radius: 10, y: 4))
+
+                        // 环境及依赖状态
+                        HStack(spacing: 8) {
+                            Circle()
+                                .fill(
+                                    V3ViewPresentation.environmentTint(
+                                        appModel: appModel,
+                                        terminalGreen: terminalGreen,
+                                        alertRed: alertRed
+                                    )
+                                )
+                                .frame(width: 8, height: 8)
+                            Text(V3ViewPresentation.environmentBadgeText(appModel: appModel))
+                                .font(.system(size: 10, weight: .semibold, design: .monospaced))
                                 .foregroundColor(.secondary)
+
+                            Spacer(minLength: 10)
+
+                            if BackendTrack.userSelectableCases.count > 1 {
+                                Menu {
+                                    ForEach(BackendTrack.userSelectableCases, id: \.rawValue) { track in
+                                        Button(track.displayName) { switchBackend(to: track) }
+                                    }
+                                } label: {
+                                    Text(activeBackendTrack.shortLabel)
+                                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                                        .foregroundColor(.secondary)
+                                }
+                                .menuStyle(.borderlessButton)
+                            } else {
+                                Text(activeBackendTrack.shortLabel)
+                                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                                    .foregroundColor(.secondary)
+                            }
+                            Button(action: manualRefresh) {
+                                Image(systemName: isScanningDeps ? "hourglass" : "arrow.clockwise")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundColor(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(isScanningDeps)
+                            .help(V3ViewPresentation.refreshActionLabel(appModel: appModel))
+                        }
+                        .padding(.horizontal, 14).padding(.vertical, 10)
+                        .background(glassPanel(cornerRadius: 14).shadow(color: .black.opacity(0.3), radius: 10, y: 4))
+
+                        if appModel.sessionState == .multipleDevices && !appModel.availableDevices.isEmpty {
+                            multipleDevicesBanner
                         }
                     }
-                    .padding(.horizontal, 10).padding(.vertical, 7)
-                    .background(glassCapsule(tint: isDeviceConnected ? terminalGreen : alertRed))
+                    .frame(width: 320)
 
                     Spacer()
 
-                    // 环境状态胶囊 + Rescan 按钮
-                    HStack(spacing: 6) {
-                        Circle()
-                            .fill(
-                                V3ViewPresentation.environmentTint(
-                                    appModel: appModel,
-                                    terminalGreen: terminalGreen,
-                                    alertRed: alertRed
-                                )
-                            )
-                            .frame(width: 7, height: 7)
-                        Text(V3ViewPresentation.environmentBadgeText(appModel: appModel))
-                            .font(.system(size: 9, weight: .semibold, design: .monospaced))
-                            .foregroundColor(.secondary)
-                        if BackendTrack.userSelectableCases.count > 1 {
-                            Menu {
-                                ForEach(BackendTrack.userSelectableCases, id: \.rawValue) { track in
-                                    Button(track.displayName) {
-                                        switchBackend(to: track)
-                                    }
+                    // 右上角浮窗：操作控制中心
+                    VStack(spacing: 12) {
+                        // 搜索与坐标聚合
+                        VStack(spacing: 10) {
+                            HStack(spacing: 8) {
+                                Image(systemName: "magnifyingglass").font(.system(size: 13, weight: .medium)).foregroundColor(.secondary)
+                                TextField("Search city…", text: $citySearchText)
+                                    .textFieldStyle(.plain)
+                                    .font(.system(size: 13))
+                                    .foregroundColor(.primary)
+                                    .onSubmit { searchCityOnly() }
+                                if !citySearchText.isEmpty {
+                                    Button(action: { citySearchText = "" }) {
+                                        Image(systemName: "xmark.circle.fill").foregroundColor(.secondary)
+                                    }.buttonStyle(.plain)
                                 }
-                            } label: {
-                                Text(activeBackendTrack.shortLabel)
-                                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
-                                    .foregroundColor(.secondary)
+                                Button(action: searchCityOnly) {
+                                    Image(systemName: "arrow.right.circle.fill").font(.system(size: 14)).foregroundColor(accentBlue)
+                                }.buttonStyle(.plain)
                             }
-                            .menuStyle(.borderlessButton)
-                        } else {
-                            Text(activeBackendTrack.shortLabel)
-                                .font(.system(size: 9, weight: .semibold, design: .monospaced))
-                                .foregroundColor(.secondary)
+                            .padding(.horizontal, 12).padding(.vertical, 10)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .fill(Color.black.opacity(0.2))
+                            )
+
+                            HStack(spacing: 10) {
+                                TechInput(title: "LAT", text: $latitude, valid: latValue != nil)
+                                TechInput(title: "LON", text: $longitude, valid: lonValue != nil)
+                            }
                         }
-                        Button(action: manualRefresh) {
-                            Image(systemName: isScanningDeps ? "hourglass" : "arrow.clockwise")
-                                .font(.system(size: 10, weight: .semibold))
-                                .foregroundColor(.secondary)
+                        .padding(14)
+                        .background(glassPanel(cornerRadius: 16).shadow(color: .black.opacity(0.3), radius: 10, y: 4))
+
+                        // 预设地点网络
+                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+                            LocationButton(flag: "🇦🇪", name: "DUBAI",      lat: "25.185317", lon: "55.281516",  color: .orange)
+                            LocationButton(flag: "🇦🇪", name: "Abu Dhabi",  lat: "24.340142", lon: "54.518667",  color: .blue)
+                            LocationButton(flag: "🇻🇳", name: "Hanoi",      lat: "20.992498", lon: "105.944606", color: .purple)
+                            LocationButton(flag: "🇯🇵", name: "Tokyo",      lat: "35.6895",   lon: "139.6917",   color: .pink)
+                            LocationButton(flag: "🇺🇸", name: "New York",   lat: "40.7128",   lon: "-74.0060",   color: .cyan)
+                            LocationButton(flag: "🇬🇧", name: "London",     lat: "51.5074",   lon: "-0.1278",    color: .green)
+                            LocationButton(flag: "🇫🇷", name: "Paris",      lat: "48.8566",   lon: "2.3522",     color: .indigo)
+                            LocationButton(flag: "🇨🇳", name: "Shenzhen",   lat: "22.5431",   lon: "114.0579",   color: .red)
+                        }
+                        .padding(14)
+                        .background(glassPanel(cornerRadius: 16).shadow(color: .black.opacity(0.3), radius: 10, y: 4))
+                    }
+                    .frame(width: 380)
+                }
+                .padding(20)
+
+                Spacer()
+
+                // 底部浮窗：核心执行按钮、状态卡片、日志
+                VStack(spacing: 12) {
+                    HStack(spacing: 12) {
+                        Button(action: teleport) {
+                            ZStack {
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    .fill(
+                                        LinearGradient(
+                                            colors: V3ViewPresentation.canTeleport(
+                                                isWorking: isWorking,
+                                                appModel: appModel,
+                                                coordsValid: coordsValid
+                                            )
+                                                ? [Color.blue.opacity(0.95), Color.purple.opacity(0.95)]
+                                                : [Color.gray.opacity(0.65), Color.gray.opacity(0.45)],
+                                            startPoint: .leading, endPoint: .trailing
+                                        )
+                                    )
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                            .strokeBorder(Color.white.opacity(0.2), lineWidth: 1)
+                                    )
+                                    .shadow(
+                                        color: Color.blue.opacity(
+                                            V3ViewPresentation.canTeleport(
+                                                isWorking: isWorking,
+                                                appModel: appModel,
+                                                coordsValid: coordsValid
+                                            ) ? 0.5 : 0
+                                        ),
+                                        radius: 16,
+                                        x: 0,
+                                        y: 6
+                                    )
+
+                                HStack(spacing: 8) {
+                                    if V3ViewPresentation.shouldShowButtonWarning(
+                                        appModel: appModel,
+                                        coordsValid: coordsValid
+                                    ) {
+                                        Image(systemName: "exclamationmark.triangle.fill").foregroundColor(.yellow).font(.system(size: 16))
+                                    }
+                                    Text(buttonTitle())
+                                        .font(.system(size: 15, weight: .bold, design: .monospaced))
+                                        .foregroundColor(.white)
+                                }
+                            }
+                            .frame(height: 48)
                         }
                         .buttonStyle(.plain)
-                        .disabled(isScanningDeps)
-                        .help(V3ViewPresentation.refreshActionLabel(appModel: appModel))
-                    }
-                    .padding(.horizontal, 10).padding(.vertical, 7)
-                    .background(glassCapsule(tint: .white.opacity(0.25)))
-                }
-                .padding(.horizontal, 15)
-                .padding(.top, 12)
-
-                // 1b. 多设备选择横幅
-                if appModel.sessionState == .multipleDevices && !appModel.availableDevices.isEmpty {
-                    multipleDevicesBanner
-                        .padding(.horizontal, 15)
-                }
-
-                // 2. 地图区 — 占据主要交互空间，随窗口高度自适应
-                ZStack {
-                    NativeMapView(region: $region) { newCenter in
-                        self.latitude = String(format: "%.6f", newCenter.latitude)
-                        self.longitude = String(format: "%.6f", newCenter.longitude)
-                    }
-                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
-                    )
-                    .shadow(color: Color.black.opacity(0.40), radius: 18, x: 0, y: 8)
-
-                    // 中心准星 —— 带阴影 + 描边，任何底图上都清晰可见
-                    ZStack {
-                        Circle()
-                            .stroke(Color.white.opacity(0.95), lineWidth: 2)
-                            .frame(width: 30, height: 30)
-                            .shadow(color: .black.opacity(0.55), radius: 3, x: 0, y: 1)
-                        Circle()
-                            .fill(accentBlue)
-                            .frame(width: 8, height: 8)
-                            .shadow(color: accentBlue.opacity(0.9), radius: 6)
-                        Image(systemName: "mappin")
-                            .font(.system(size: 22, weight: .bold))
-                            .foregroundColor(.red)
-                            .shadow(color: .black.opacity(0.6), radius: 3, x: 0, y: 2)
-                            .offset(y: -18)
-                    }
-                    .allowsHitTesting(false)
-                }
-                .frame(minHeight: showDebugLog ? 240 : 320, maxHeight: .infinity)
-                .layoutPriority(1)
-                .padding(.horizontal, 15)
-
-                // 3. 搜索栏
-                HStack(spacing: 8) {
-                    Image(systemName: "magnifyingglass").font(.system(size: 13, weight: .medium)).foregroundColor(.secondary)
-                    TextField("Search city…", text: $citySearchText)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 13))
-                        .foregroundColor(.primary)
-                        .onSubmit { searchCityOnly() }
-                    if !citySearchText.isEmpty {
-                        Button(action: { citySearchText = "" }) {
-                            Image(systemName: "xmark.circle.fill").foregroundColor(.secondary)
-                        }.buttonStyle(.plain)
-                    }
-                    Button(action: searchCityOnly) {
-                        Image(systemName: "arrow.right.circle.fill").font(.system(size: 14)).foregroundColor(accentBlue)
-                    }.buttonStyle(.plain)
-                }
-                .padding(.horizontal, 12).padding(.vertical, 10)
-                .background(glassPanel(cornerRadius: 12))
-                .padding(.horizontal, 15)
-
-                // 4. 坐标栏
-                HStack(spacing: 10) {
-                    TechInput(title: "LAT", text: $latitude, valid: latValue != nil)
-                    TechInput(title: "LON", text: $longitude, valid: lonValue != nil)
-                }
-                .padding(.horizontal, 15)
-
-                // 5. 快捷按钮
-                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
-                    LocationButton(flag: "🇦🇪", name: "DUBAI",      lat: "25.185317", lon: "55.281516",  color: .orange)
-                    LocationButton(flag: "🇦🇪", name: "Abu Dhabi",  lat: "24.340142", lon: "54.518667",  color: .blue)
-                    LocationButton(flag: "🇻🇳", name: "Hanoi",      lat: "20.992498", lon: "105.944606", color: .purple)
-                    LocationButton(flag: "🇯🇵", name: "Tokyo",      lat: "35.6895",   lon: "139.6917",   color: .pink)
-                    LocationButton(flag: "🇺🇸", name: "New York",   lat: "40.7128",   lon: "-74.0060",   color: .cyan)
-                    LocationButton(flag: "🇬🇧", name: "London",     lat: "51.5074",   lon: "-0.1278",    color: .green)
-                    LocationButton(flag: "🇫🇷", name: "Paris",      lat: "48.8566",   lon: "2.3522",     color: .indigo)
-                    LocationButton(flag: "🇨🇳", name: "Shenzhen",   lat: "22.5431",   lon: "114.0579",   color: .red)
-                }
-                .padding(.horizontal, 15)
-
-                // 6. 执行按钮
-                HStack(spacing: 10) {
-                    Button(action: teleport) {
-                        ZStack {
-                            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .fill(
-                                    LinearGradient(
-                                        colors: V3ViewPresentation.canTeleport(
-                                            isWorking: isWorking,
-                                            appModel: appModel,
-                                            coordsValid: coordsValid
-                                        )
-                                            ? [Color.blue.opacity(0.95), Color.purple.opacity(0.95)]
-                                            : [Color.gray.opacity(0.55), Color.gray.opacity(0.35)],
-                                        startPoint: .leading, endPoint: .trailing
-                                    )
-                                )
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                        .strokeBorder(Color.white.opacity(0.18), lineWidth: 1)
-                                )
-                                .shadow(
-                                    color: Color.blue.opacity(
-                                        V3ViewPresentation.canTeleport(
-                                            isWorking: isWorking,
-                                            appModel: appModel,
-                                            coordsValid: coordsValid
-                                        ) ? 0.35 : 0
-                                    ),
-                                    radius: 12,
-                                    x: 0,
-                                    y: 4
-                                )
-
-                            HStack(spacing: 6) {
-                                if V3ViewPresentation.shouldShowButtonWarning(
-                                    appModel: appModel,
-                                    coordsValid: coordsValid
-                                ) {
-                                    Image(systemName: "exclamationmark.triangle.fill").foregroundColor(.yellow)
-                                }
-                                Text(buttonTitle())
-                                    .font(.system(size: 13, weight: .bold, design: .monospaced))
-                                    .foregroundColor(.white)
-                            }
-                        }
-                        .frame(height: 40)
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(
-                        !V3ViewPresentation.canTeleport(
-                            isWorking: isWorking,
-                            appModel: appModel,
-                            coordsValid: coordsValid
+                        .disabled(
+                            !V3ViewPresentation.canTeleport(
+                                isWorking: isWorking,
+                                appModel: appModel,
+                                coordsValid: coordsValid
+                            )
                         )
-                    )
 
-                    Button(action: clearSimulatedLocation) {
-                        ZStack {
-                            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .fill(
-                                    LinearGradient(
-                                        colors: canClearSimulatedLocation
-                                            ? [Color.orange.opacity(0.90), Color.red.opacity(0.82)]
-                                            : [Color.gray.opacity(0.50), Color.gray.opacity(0.32)],
-                                        startPoint: .leading, endPoint: .trailing
+                        Button(action: clearSimulatedLocation) {
+                            ZStack {
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    .fill(
+                                        LinearGradient(
+                                            colors: canClearSimulatedLocation
+                                                ? [Color.orange.opacity(0.90), Color.red.opacity(0.82)]
+                                                : [Color.gray.opacity(0.60), Color.gray.opacity(0.40)],
+                                            startPoint: .leading, endPoint: .trailing
+                                        )
                                     )
-                                )
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                        .strokeBorder(Color.white.opacity(0.18), lineWidth: 1)
-                                )
-                            HStack(spacing: 6) {
-                                Image(systemName: "location.slash.fill")
-                                    .foregroundColor(.white)
-                                Text(isWorking ? "WORKING..." : "CLEAR LOCATION")
-                                    .font(.system(size: 12, weight: .bold, design: .monospaced))
-                                    .foregroundColor(.white)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                            .strokeBorder(Color.white.opacity(0.2), lineWidth: 1)
+                                    )
+                                HStack(spacing: 8) {
+                                    Image(systemName: "location.slash.fill")
+                                        .foregroundColor(.white).font(.system(size: 14))
+                                    Text(isWorking ? "WORKING..." : "CLEAR")
+                                        .font(.system(size: 14, weight: .bold, design: .monospaced))
+                                        .foregroundColor(.white)
+                                }
                             }
+                            .frame(width: 140, height: 48)
                         }
-                        .frame(width: 180, height: 40)
+                        .buttonStyle(.plain)
+                        .disabled(!canClearSimulatedLocation)
                     }
-                    .buttonStyle(.plain)
-                    .disabled(!canClearSimulatedLocation)
-                }
-                .padding(.horizontal, 15)
 
-                // 7. 状态卡（用户只看这一条）
-                statusCard
-                    .padding(.horizontal, 15)
+                    statusCard
+                        .shadow(color: .black.opacity(0.3), radius: 10, y: 4)
 
-                // 8. 可选：Debug 日志（默认折叠, 固定高度 180, 内部滚动)
-                if showDebugLog {
-                    debugLogPanel
-                        .frame(height: 180)
-                        .padding(.horizontal, 15)
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                    if showDebugLog {
+                        debugLogPanel
+                            .frame(height: 200)
+                            .shadow(color: .black.opacity(0.3), radius: 10, y: 4)
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                    }
                 }
+                .frame(maxWidth: 600)
+                .padding(.bottom, 24)
             }
-            .padding(.bottom, 12)
         }
-        .frame(minWidth: 540, minHeight: 720)
-        .onReceive(timer) { _ in
-            performScheduledRefresh()
-        }
+        .preferredColorScheme(.dark)
+        .frame(minWidth: 800, minHeight: 650)
         .onAppear {
             appModel.backendTrack = activeBackendTrack
             logSystemInfo()
             performInitialRefresh()
+
+            // Set up event-driven USB monitoring instead of 2-second polling
+            IOKitUSBMonitor.shared.onDeviceChange = {
+                log("[SYS] USB hardware change detected via IOKit, refreshing state...")
+                performScheduledRefresh()
+            }
+            IOKitUSBMonitor.shared.start()
         }
         .sheet(isPresented: $showDevicePicker) {
             DevicePickerSheet(
@@ -549,27 +530,7 @@ struct ContentView: View {
         }
     }
 
-    // MARK: - Glass helpers
 
-    func glassPanel(cornerRadius: CGFloat) -> some View {
-        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-            .fill(.regularMaterial)
-            .overlay(
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .strokeBorder(Color.white.opacity(0.10), lineWidth: 1)
-            )
-    }
-
-    func glassCapsule(tint: Color) -> some View {
-        Capsule()
-            .fill(.regularMaterial)
-            .overlay(
-                Capsule().fill(tint.opacity(0.12))
-            )
-            .overlay(
-                Capsule().strokeBorder(tint.opacity(0.45), lineWidth: 1)
-            )
-    }
 
     // MARK: - Status card
 
@@ -831,7 +792,7 @@ struct ContentView: View {
         let panel = NSSavePanel()
         panel.title = "Export Diagnostics"
         panel.nameFieldStringValue = "GeoTeleport_Diagnostics_\(formattedDateForFilename()).txt"
-        panel.allowedFileTypes = ["txt"]
+        panel.allowedContentTypes = [.plainText]
         panel.canCreateDirectories = true
 
         panel.begin { response in
@@ -1474,37 +1435,5 @@ struct ContentView: View {
             )
             .shadow(color: color.opacity(0.18), radius: 5, x: 0, y: 2)
         }.buttonStyle(.plain)
-    }
-}
-
-// 原生地图引擎封装 (AppKit MKMapView)
-struct NativeMapView: NSViewRepresentable {
-    @Binding var region: MKCoordinateRegion
-    var onRegionChange: (CLLocationCoordinate2D) -> Void
-    func makeNSView(context: Context) -> MKMapView {
-        let mapView = MKMapView()
-        mapView.delegate = context.coordinator
-        mapView.mapType = .standard
-        mapView.showsUserLocation = false
-        mapView.isRotateEnabled = false
-        mapView.isPitchEnabled = false
-        mapView.showsZoomControls = true
-        mapView.showsCompass = true
-        mapView.showsScale = true
-        return mapView
-    }
-    func updateNSView(_ nsView: MKMapView, context: Context) {
-        let d = abs(nsView.centerCoordinate.latitude - region.center.latitude) + abs(nsView.centerCoordinate.longitude - region.center.longitude)
-        if d > 0.0001 || abs(nsView.region.span.latitudeDelta - region.span.latitudeDelta) > 0.001 { nsView.setRegion(region, animated: true) }
-    }
-    func makeCoordinator() -> Coordinator { Coordinator(self) }
-    class Coordinator: NSObject, MKMapViewDelegate {
-        var parent: NativeMapView; init(_ parent: NativeMapView) { self.parent = parent }
-        func mapView(_ mapView: MKMapView, regionDidChangeAnimated animated: Bool) {
-            DispatchQueue.main.async {
-                self.parent.region = mapView.region
-                self.parent.onRegionChange(mapView.centerCoordinate)
-            }
-        }
     }
 }

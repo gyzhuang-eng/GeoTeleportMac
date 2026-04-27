@@ -124,6 +124,10 @@
 			inputFileListPaths = (
 			);
 			inputPaths = (
+				"$(SRCROOT)/native-device-core/Cargo.lock",
+				"$(SRCROOT)/native-device-core/Cargo.toml",
+				"$(SRCROOT)/native-device-core/src/core.rs",
+				"$(SRCROOT)/native-device-core/src/lib.rs",
 				"$(SRCROOT)/native-device-core/src/main.rs",
 			);
 			name = "Build & Bundle Rust Helper";

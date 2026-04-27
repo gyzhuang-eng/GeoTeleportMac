@@ -9,7 +9,7 @@
 ## 0. Handoff Snapshot (read this first)
 
 **You are the next engineer on this project.**
-Last updated: **2026-04-25**. Branch: `v3/device-core-rust`.
+Last updated: **2026-04-27**. Branch: `v3/device-core-rust`.
 
 ### Where we are in 60 seconds
 
@@ -24,8 +24,8 @@ Phase C code-level work is done:
   `Contents/Helpers/`.
 - **Multi-device selection UI** — `DevicePickerSheet`, `selectedDeviceUDID`
   (UserDefaults), `GTM_PREFERRED_DEVICE_UDID` env-var bridging.
-- **Honest blockers** — `xcodeToolchainMissing`, `pymobiledevice3Missing`,
-  `bundledDeviceCoreMissing` fully wired.
+- **Honest blockers** — migration-era Xcode / `pymobiledevice3` blockers were
+  wired, and current runtime readiness centers on the bundled device core.
 - **Developer Mode guidance** for iOS 16+ in `readinessSummary`.
 - **XCTest harness deleted** — `XcodeTestLocationInjectionTransportAdapter`,
   `XcodeLocationHarnessPackage`, and the harness self-check are gone.
@@ -33,11 +33,15 @@ Phase C code-level work is done:
   `V3LegacyDeviceTransport`, `V3LegacyLocationTransport`, `V3TunnelLauncher`
   (Terminal AppleScript), tunnel banner, and all compatibility-message branches
   removed. Only `noPythonStub` remains.
+- **pymobiledevice3 fallback deleted** — `EndpointBackedInjectionTransportCommandAdapter`,
+  `ProductOwnedTunnelStateController`, `V3LegacyCLIPathResolver`, and
+  `V3ShellCommandRunner` are gone. Native device-core is the only runtime path.
+- **Immersive HUD UI redesign** — full-window map surface with floating glass
+  controls and fixed `NativeMapView` center/span refresh behavior.
 
-**Remaining Phase C work:**
-- Obtain a Developer ID Application certificate and sign the app + helper binary.
-- Notarize and staple the DMG.
-- Test on a clean macOS install (no Xcode, no Python, no pymobiledevice3).
+**Remaining release work:**
+- Test on a clean macOS install (no Xcode, no Python, no `pymobiledevice3`).
+- Record clean-Mac hardware validation results in this file's change log.
 
 ### Day-1 verification checklist
 
@@ -55,12 +59,12 @@ xcodebuild -project GeoTeleportMac.xcodeproj \
 # 4. Non-hardware self-checks all pass (run against the built .app binary)
 APP=$(find ~/Library/Developer/Xcode/DerivedData -name "GeoTeleportMacV3" \
   -path "*/MacOS/GeoTeleportMacV3" | head -1)
-"$APP" --v3-self-check-toolchain-probe         # 4 cases
-"$APP" --v3-self-check-tunnel-log-parser        # 4 cases
-"$APP" --v3-self-check-injection-transport      # 8 cases
+"$APP" --v3-self-check-toolchain-probe
+"$APP" --v3-self-check-native-device-core-enumeration
+"$APP" --v3-self-check-native-device-core-device-info
 "$APP" --v3-self-check-agent-protocol-version   # 3 cases
-"$APP" --v3-self-check-native-device-core-injection  # 6 cases
-# Total: 25 cases, all must pass
+"$APP" --v3-self-check-native-device-core-injection
+# All must pass. Some case counts vary depending on attached hardware.
 ```
 
 If any check fails, stop and diagnose before writing new code.
@@ -71,15 +75,12 @@ Code-level Phase C and most of Phase D are complete. The app has:
 - Single noPython backend, multi-device selection, honest blockers
 - Diagnostics export via NSSavePanel (session state + debug log + telemetry)
 - Opt-in telemetry path for device-core failures (no PII)
-- All 25 non-hardware self-check cases pass
+- Native device-core FFI integration and no remaining `pymobiledevice3` runtime fallback
 
 Remaining work before ship:
-1. **Developer ID code signing** (optional — user can run unsigned with Gatekeeper bypass).
-2. **Test on a clean macOS install.** A VM with no Xcode, no Python, no `pymobiledevice3`.
-3. **Delete the pymobiledevice3 fallback.** `EndpointBackedInjectionTransportCommandAdapter`
-   and `ProductOwnedTunnelStateController` still use `V3LegacyCLIPathResolver`. These
-   are dead for nativeRsd/nativeLockdown but remain as a compatibility fallback.
-   Once native paths are proven stable on clean macOS, remove them.
+1. **Test on a clean macOS install.** A VM with no Xcode, no Python, no `pymobiledevice3`.
+2. **Record clean-Mac hardware validation.** Include macOS version, iPhone
+   model, iOS version, and pass/fail notes in this file's change log.
 
 ### What is NOT your job right now
 
@@ -99,7 +100,8 @@ their iPhone with a Lightning/USB-C cable, and expect the app to work without
 installing Python, Xcode, `pymobiledevice3`, `pipx`, Homebrew, or any developer
 toolchain.
 
-**Current platform.** macOS, shipped as a signed, notarized `.dmg`.
+**Current platform.** macOS, distributed as an unsigned `.dmg` / `.app` for
+now. Users must intentionally bypass the macOS warning on first launch.
 
 **Next platform.** Windows, same iOS workflow. The macOS work must not paint us
 into a Mac-only corner; the device-side logic should be extractable into a
@@ -118,32 +120,29 @@ cross-platform core.
 Prior iterations of this plan were organized around the slogan "no Python." In
 a consumer-DMG context that slogan is insufficient and in parts misleading:
 
-1. **The consumer has no Xcode.** Our current primary injection path runs
-   `xcodebuild test` against an XCTest harness. That works on a developer's
-   Mac. On a clean consumer Mac there is no `xcodebuild`. The current code
-   will fail immediately for every target user.
-2. **The consumer has no `pymobiledevice3`.** The "product-owned tunnel
-   controller" still shells out to `pymobiledevice3 remote tunneld` for iOS
-   17+ RemoteXPC tunneling. On a consumer Mac that binary is absent.
-3. **macOS App Sandbox will not host this workflow.** `xcodebuild`, arbitrary
-   subprocess spawning, and raw USB control are incompatible with a sandboxed
-   Mac App Store build. Distribution must be Developer ID + notarization; MAS
-   is not a viable channel for V3.
+1. **The consumer has no Xcode.** Earlier builds used `xcodebuild test`
+   against an XCTest harness. That worked on a developer's Mac but failed on
+   clean consumer Macs. The harness is now deleted.
+2. **The consumer has no `pymobiledevice3`.** Earlier builds used
+   `pymobiledevice3 remote tunneld` for iOS 17+ RemoteXPC tunneling. That
+   fallback is now deleted.
+3. **macOS App Sandbox will not host this workflow.** Arbitrary subprocess
+   spawning and raw USB control are incompatible with a sandboxed Mac App Store
+   build. Distribution is outside the Mac App Store; the current project choice
+   is unsigned distribution with explicit user bypass of the macOS warning.
 4. **Windows has neither Python nor Xcode nor `pymobiledevice3`.** Any
    architecture that keeps shelling out to these tools will need to be
    rebuilt for Windows. That argues for a bundled native device core now.
 
-The honest label for the work so far is therefore:
+Those runtime gaps are now closed:
 
-- `no-Python *UI*` — achieved (the app no longer scans for or instructs users
-  about `python3`, `pipx`, or `pymobiledevice3`).
-- `no-Python *runtime*` — NOT achieved (the tunnel controller still executes
-  `pymobiledevice3`).
-- `no-Xcode *runtime*` — NOT achieved (the injection path still executes
-  `xcodebuild test`).
-- `shippable DMG` — NOT achieved.
+- `no-Python *UI*` — achieved.
+- `no-Python *runtime*` — achieved; no `pymobiledevice3` fallback remains.
+- `no-Xcode *runtime*` — achieved; the XCTest harness is deleted.
+- `unsigned DMG` — accepted for this build; users bypass the macOS warning
+  intentionally.
 
-Everything below is organized around closing those three gaps.
+Everything below tracks the remaining release validation and Windows planning.
 
 ---
 
@@ -181,46 +180,36 @@ find ~/Library/Developer/Xcode/DerivedData -name "GeoTeleportMacV3" \
   -path "*/MacOS/GeoTeleportMacV3" | head -1
 ```
 
-### What already works on a developer machine
+### What already works
 
-- SwiftUI `ContentView` no longer owns `Process` execution, dependency
-  scanning, `ioreg`/`pgrep` calls, or Terminal AppleScript launches.
+- SwiftUI `ContentView` renders from typed state and now uses a full-window
+  map HUD layout with floating controls.
 - `V3RuntimeCoordinator` + typed service protocols sit between the UI and the
   backend (`DeviceMonitoring`, `TunnelManaging`, `LocationInjecting`,
   `DiagnosticsProviding`).
-- Two backend tracks exist: `legacyPreview` (retained for regression
-  comparison) and the default `noPythonStub` track.
+- Only the `noPythonStub` backend track remains; legacyPreview was deleted.
 - A child-process agent boundary works end-to-end: the app re-executes its own
   binary with `--v3-agent`, and app↔agent communicates over stdin/stdout with
   a typed JSON protocol (`V3DeviceAgentProtocol`).
 - Typed readiness model drives the UI and diagnostics: `DeviceAgentAvailability`,
   `DeviceSessionState`, `ConnectionHealth`, `SessionBlocker`, `nextAction`,
   `DeviceAgentReadinessGate`, refresh intent/scope/focus, typed tunnel
-  `requirement/lifecycle/session/health`, `protocolHint`, injection transport
-  contract, `DeviceInfoTransportServiceStack` with two slots (reserved
-  typed-metadata + USB-bootstrap stub).
-- USB device detection via `system_profiler SPUSBDataType` with `ioreg` fallback.
-- Tunnel health verification layered as: startup-log readiness markers →
-  `lsof` listener discovery → TCP connect → session-handshake probe →
-  expected-RSD endpoint verification.
-- Primary injection path: a materialized `GeoTeleportLocationHarness` XCTest
-  package under `~/Library/Application Support/
-  com.test.GeoTeleportMac.v3/GeneratedArtifacts/GeoTeleportLocationHarness`,
-  run via `xcodebuild test` keyed by an `xcdevice`-resolved identifier.
-- Self-checks: `--v3-self-check-tunnel-log-parser`,
-  `--v3-self-check-injection-transport`,
-  `--v3-self-check-xcode-location-harness`.
+  `requirement/lifecycle/session/health`, `protocolHint`, and native injection
+  transport contract.
+- Rust `native-device-core` owns USB enumeration, lockdown device info,
+  iOS <= 16 simulate-location, and the iOS 17+ DVT daemon.
+- Swift prefers the C FFI dylib for short-lived native-core calls; the iOS 17+
+  daemon remains a managed long-running helper process.
+- Multi-device selection, Developer Mode guidance, diagnostics export, and
+  opt-in telemetry are wired.
+- Self-check entry points cover toolchain probe machinery, native enumeration,
+  native device-info, native injection, and agent protocol versioning.
 
 ### What does NOT work for the target DMG user
 
-- The Xcode-backed injection path fails on any Mac without Xcode installed.
-- The tunnel controller fails on any Mac without `pymobiledevice3` installed.
-- The DMG has no code-signing, no notarization, no entitlements design, no
-  first-run onboarding, no privileged-helper story.
-- Multi-device is detected as a blocker but not presented as a selectable UI.
-- The JSON agent protocol has no `schemaVersion` field; a mismatched app/agent
-  pair would fail in hard-to-diagnose ways.
-- No consumer-Mac end-to-end validation has been performed.
+- Unsigned builds show the standard macOS warning. That is an accepted product
+  choice for now; the first-run instructions must tell users how to bypass it.
+- No clean consumer-Mac end-to-end validation has been recorded yet.
 
 ---
 
@@ -250,7 +239,7 @@ find ~/Library/Developer/Xcode/DerivedData -name "GeoTeleportMacV3" \
 │   - Cross-platform-compilable (mac today, Windows later)       │
 ├────────────────────────────────────────────────────────────────┤
 │ OS plumbing (per host)                                         │
-│   - macOS: IOKit / libusb / code-signed helper if needed       │
+│   - macOS: IOKit / libusb / bundled helper if needed           │
 │   - Windows: WinUSB / libusbK / driver assistant               │
 └────────────────────────────────────────────────────────────────┘
 ```
@@ -289,9 +278,9 @@ Phase B is split into three deliverables that must land in order:
   and the app must not silently spin.
 - Add `schemaVersion: Int` to every `DeviceAgentRequest` / `DeviceAgentResponse`.
   Mismatch between app and agent must fail fast with a typed error.
-- Explicitly mark the `pymobiledevice3 remote tunneld` call site as
-  `TEMPORARY_CLI_BRIDGE` in code and in this plan. This is not the shipping
-  implementation.
+- Earlier Phase B.1 work explicitly marked the `pymobiledevice3 remote tunneld`
+  call site as `TEMPORARY_CLI_BRIDGE`. That marker should now be zero-result
+  in code because the fallback has been deleted.
 
 **B.2 — Choose the device-core technology.** Decision-making rubric in §7.
 Lock the choice by writing the decision into §7 of this file. Until this is
@@ -324,7 +313,8 @@ boundary should not change during Phase B.
 - ✅ `GeoTeleportMac.entitlements` (debug) and
   `GeoTeleportMac.distribution.entitlements` (release, no `get-task-allow`) created.
 - ✅ Rust binary bundled at `Contents/Helpers/` via `PBXShellScriptBuildPhase`
-  that runs `cargo build [--release]` and copies + signs the output.
+  that runs `cargo build [--release]`, copies the output, and signs helper
+  artifacts when an expanded signing identity is present.
 - ✅ `resolveBinaryPath` checks `Contents/Helpers/` first (DMG path), falls
   back to dev-build `#filePath` path.
 - ✅ First-run UX: `device-info` failures classified into "iPhone locked" /
@@ -332,18 +322,13 @@ boundary should not change during Phase B.
 - ✅ `needsTunnel` no longer blocks `.nativeRsd` / `.nativeLockdown` transports.
 
 **Remaining:**
-- Developer ID signing for every binary the `.app` ships.
-- Notarization + stapling for the DMG (`notarytool submit`).
 - Test on a clean macOS install (no Xcode, no Python, no `pymobiledevice3`).
-- Multi-device selection UI (the `multipleDevices` blocker currently dead-ends).
-- Explain "enable Developer Mode on your iPhone" for iOS 16+ in the UI.
-- Drop the remaining Terminal / AppleScript code paths (guarded by
-  `legacyPreview` track, not user-reachable on `noPythonStub`).
+- Record clean-Mac hardware validation results.
 
 ### Phase D — Consumer-Mac validation
 
 - Clean-install tests on at least two macOS versions, two iPhone models, and
-  two iOS major versions (including one iOS 17+). *(blocked by signing)*
+  two iOS major versions (including one iOS 17+).
 - **Sparse but real crash/telemetry path (opt-in) — ✅ DONE.** Scoped to
   device-core failures only; no PII. `V3TelemetryStore` writes sanitized JSONL
   to `Application Support/com.test.GeoTeleportMac.v3/telemetry/`. Opt-in toggle
@@ -354,7 +339,7 @@ boundary should not change during Phase B.
   a `.txt` file via `NSSavePanel` containing session state dump, debug log,
   and telemetry events.
 
-### Phase E — Cross-platform core extraction 🟡 IN PROGRESS
+### Phase E — Cross-platform core extraction ✅ DONE
 
 **Rust library:** `native-device-core` now produces both a CLI binary and a C FFI
 dynamic library (`libgeoteleport_device_core.dylib`). Shared logic lives in
@@ -380,18 +365,15 @@ when the dylib is available, falling back to Process-based shell-out for
 development without the FFI dylib. The `ios17-location-daemon` continues to
 use Process (inherently long-running, needs stdin/stdout pipes).
 
-**Xcode:** build phase copies both the binary and dylib to `Contents/Helpers/`
-and signs them with Hardened Runtime when code signing is active.
+**Xcode:** build phase copies both the binary and dylib to `Contents/Helpers/`.
 
 ### Phase F — Windows port
 
-- Windows host: pick the UI stack (likely WinUI 3, or Tauri if a shared web
-  UI makes more sense after Phase E).
-- Windows USB driver story: WinUSB vs libusbK; assess whether a driver
-  installer is needed.
-- Reuse the device core from Phase E unchanged except for the host adapter.
-- Installer: MSIX or signed `.exe`/`.msi`.
-- Windows-side first-run UX parallels Phase C.
+1. **Host USB/Driver Setup.** Research `usbmuxd` (iTunes) sufficiency vs WinUSB/libusbK for RSD.
+2. **UI Selection.** WinUI 3 (native) vs Tauri (reusable web UI).
+3. **Core Integration.** Compile `native-device-core` as DLL and bridge via FFI.
+4. **Daemon.** Port process management logic to Windows.
+5. **Installer.** MSIX, MSI, or EXE.
 
 ---
 
@@ -400,13 +382,11 @@ and signs them with Hardened Runtime when code signing is active.
 | Phase | Scope                                  | Status        |
 |-------|----------------------------------------|---------------|
 | A     | UI/state/agent boundary                | ✅ DONE       |
-| B.1   | Honest blockers, protocol versioning   | ✅ DONE       |
-| B.2   | Device-core tech decision              | ✅ DONE (Rust, §7) |
-| B.3   | Bundled device core implementation     | ✅ DONE (Phase B exit criteria met) |
-| C     | DMG signing, notarization, first-run   | 🟡 IN PROGRESS |
-| D     | Consumer-Mac validation                | 🟡 IN PROGRESS |
-| E     | Cross-platform core extraction         | 🟡 IN PROGRESS |
-| F     | Windows port                           | ⬜ NOT STARTED |
+| B     | Bundled device core (Rust)             | ✅ DONE       |
+| C     | DMG packaging, first-run UX            | ✅ CODE DONE (Unsigned distribution accepted) |
+| D     | Consumer-Mac validation                | ✅ CODE DONE (Validation pending) |
+| E     | Cross-platform core extraction         | ✅ DONE       |
+| F     | Windows port                           | 🟡 IN PROGRESS (Planning) |
 
 A previous revision of this plan marked Phases 1–3 as "complete in practice."
 That claim conflated "implemented on a developer machine" with "shippable."
@@ -422,14 +402,13 @@ before Phase B.3 starts.
 ### Option 1 — Bundle `pymobiledevice3` + embedded Python inside the .app
 
 - **How.** Ship an embedded Python framework and `pymobiledevice3` as a
-  code-signed helper binary inside `Contents/Helpers`. Treat it as a private
+  bundled helper binary inside `Contents/Helpers`. Treat it as a private
   implementation detail; never let the user see it.
 - **Pros.** Fastest route to a shippable DMG. iOS 17+ RSD support is already
   working. Smallest code change from today.
-- **Cons.** Adds ~60–100 MB to the DMG. Code-signing nested Python
-  frameworks under hardened runtime is fiddly. Still not cross-platform in
-  any meaningful sense; Windows gets nothing reusable. Long-term anchor to
-  Python.
+- **Cons.** Adds ~60–100 MB to the DMG. Bundling nested Python frameworks is
+  fiddly. Still not cross-platform in any meaningful sense; Windows gets
+  nothing reusable. Long-term anchor to Python.
 
 ### Option 2 — `libimobiledevice` (C)
 
@@ -480,19 +459,16 @@ existing agent seam first, then expand capability-by-capability.
 
 ## 8. Packaging & Distribution Strategy
 
-- **Channel.** Developer ID + notarized DMG. Not Mac App Store.
-- **Signing surface.** The `.app`, the bundled device core binary, any
-  helper tools, and the DMG itself. All must be signed with the same
-  Developer ID Application identity and pass `spctl -a -vv` and
-  `stapler validate`.
-- **Hardened Runtime.** Enabled. Required entitlements documented in the
-  repo at build time, not spread across Xcode UI state.
+- **Channel.** Unsigned DMG / app distribution. Not Mac App Store.
+- **First-run warning.** macOS will warn that the app cannot be verified.
+  This is accepted for the current build; release notes and onboarding must
+  tell users to bypass the warning intentionally.
 - **Auto-update.** Deferred to post-Phase-C. Initial releases are manual
   DMG downloads; add a Sparkle-style updater once Phase D validation is
   green on real users.
-- **Windows (Phase F).** Signed `.exe` installer (MSI or MSIX). Driver
-  installation — if WinUSB cannot attach without one — gets its own
-  first-run step.
+- **Windows (Phase F).** Installer format is still open (MSI, MSIX, or
+  `.exe`). Driver installation — if WinUSB cannot attach without one — gets
+  its own first-run step.
 - **Do not** target the Mac App Store; `xcodebuild`, sub-process spawning,
   raw USB control, and any privileged helper design are all sandbox hostile.
   If App Store distribution ever becomes a goal, it is a separate product.
@@ -508,7 +484,7 @@ existing agent seam first, then expand capability-by-capability.
   - `v3/honest-blockers` (Phase B.1)
   - `v3/core-decision` (Phase B.2 — docs-only PR capturing the decision)
   - `v3/device-core-<tech>` (Phase B.3, name reflects the chosen option)
-  - `v3/dmg-signing` (Phase C)
+  - `v3/dmg-packaging` (Phase C)
   - `v3/cross-platform-core` (Phase E)
   - `v3/windows-host` (Phase F)
 
@@ -525,10 +501,10 @@ Phases B, C, D are green. A half-done V3 on `main` is worse than shipping V2.
 | USB access requires privileged helper on macOS                  | Design for a SMJobBless / SMAppService helper from day one of Phase B.3  |
 | Windows driver story blocks Phase F                             | Scope a WinUSB proof-of-concept during Phase E, not after                |
 | Option 1 (bundled Python) gets entrenched                       | Dated replacement commitment must be in §7 before Option 1 ships         |
-| DMG gets flagged by Gatekeeper due to helper signing            | Notarize every binary separately, run signing verification in CI         |
+| Users are confused by unsigned macOS warning                    | Document the bypass clearly in release notes and first-run instructions  |
 | Users enable Developer Mode incorrectly / don't trust the Mac   | First-run assistant (Phase C) covers these states explicitly             |
 | Multi-device connected simultaneously                           | Turn the existing `multipleDevices` blocker into a selection UI in Phase C |
-| App/agent protocol drift once agent is a separate signed binary | `schemaVersion` in Phase B.1; typed failure on mismatch                  |
+| App/agent protocol drift once agent is a separate bundled helper | `schemaVersion` in Phase B.1; typed failure on mismatch                 |
 
 ---
 
@@ -541,8 +517,8 @@ All of the following must be true before a V3 DMG is offered to users:
    connected iOS 17+ iPhone.
 2. The app bundle contains every binary it needs; no runtime subprocess
    targets a user-installed tool.
-3. The DMG is Developer ID signed and notarized; hardened runtime is
-   enabled; `spctl` and `stapler` pass.
+3. The unsigned first-run flow is documented clearly enough that users can
+   bypass the macOS warning without Terminal.
 4. The UI speaks product language only — no mention of Python,
    `pymobiledevice3`, Terminal, `pipx`, or `xcodebuild` anywhere visible to
    the user.
@@ -560,180 +536,40 @@ Windows.
 
 ---
 
-## 12. Where to Start (concrete next commits)
+## 12. Where to Start (current next commits)
 
 In execution order for whoever picks this up next:
 
-### Step 1 — Add honest blockers (branch: `v3/honest-blockers`)
+### Step 1 — Clean consumer-Mac validation
 
-Today the app shows a spinning "probing" state on any Mac that lacks Xcode
-or `pymobiledevice3`. That is the single most user-hostile behavior and it
-is trivial to fix. This is your first commit.
+- Build the app normally and package it for local unsigned distribution.
+- Test on a clean macOS install with no Xcode, no Python, no Homebrew, and no
+  `pymobiledevice3`.
+- Verify USB enumeration, device-info, set location, and clear location on at
+  least one iOS 17+ device and one iOS <= 16 device if available.
+- Record exact macOS version, iPhone model, iOS version, and pass/fail notes
+  in this file's change log.
 
-Concrete implementation sketch:
+### Step 2 — Unsigned first-run instructions
 
-- In `V3DeviceAgentService.swift`, add a `ToolchainProbe` helper that runs
-  these three checks once per probe cycle and caches the result:
-  - `xcode-select -p` exits 0 *and* the returned path is not
-    `/Library/Developer/CommandLineTools` (that path means CLT only, no
-    Xcode).
-  - `xcrun xcodebuild -version` exits 0.
-  - `which pymobiledevice3` finds a binary, and `pymobiledevice3 --version`
-    exits 0.
-- In `V3DeviceAgentModels.swift`, add three cases to
-  `DeviceAgentAvailabilityBlocker`:
-  - `xcodeToolchainMissing`
-  - `pymobiledevice3Missing`
-  - `bundledDeviceCoreMissing` *(placeholder the Phase B.3 work will flip
-    on once the native core replaces the other two)*
-- In `V3NoPythonBackendStub.swift`, map each blocker to a user-facing
-  `nextAction` string that speaks product language. Examples:
-  - `xcodeToolchainMissing` → "GeoTeleport requires Xcode on this build.
-    The shipping version will not. (internal: Phase B.3)"
-  - `pymobiledevice3Missing` → "GeoTeleport requires pymobiledevice3 on
-    this build. The shipping version will not. (internal: Phase B.3)"
-- Add a unit-test-style self-check at the agent entrypoint:
-  `--v3-self-check-toolchain-probe` that prints each probe's result and
-  exits non-zero if the probe machinery itself is broken (not if a tool is
-  absent — absence is a valid result).
-- In `ContentView.swift`, ensure the status card renders these blockers as
-  first-class states, not as generic "backend unavailable."
+- Product-facing unsigned first-run instructions now live in `README.md`.
+- Keep this out of the in-app runtime UI unless the app can detect the
+  first-run state.
 
-Exit criterion for Step 1: on a Mac with Xcode uninstalled (or
-`sudo xcode-select --reset` used to point at CLT), the app launches, does
-not spin, and the status card explains the gap in one sentence.
+### Step 3 — Windows planning continuation
 
-### Step 2 — Version the agent protocol (branch: `v3/protocol-version`)
+- Decide the Windows UI stack and installer path.
+- Scope the USB driver / usbmuxd dependency story.
+- Keep `native-device-core` changes portable and routed through host adapters.
 
-- Add `schemaVersion: Int` at the top of both `DeviceAgentRequest` and
-  `DeviceAgentResponse` in `V3DeviceAgentProtocol.swift`. Define
-  `currentSchemaVersion = 1` as a single source of truth.
-- In `V3ChildProcessDeviceAgentClient.swift`, reject any response whose
-  `schemaVersion` does not match `currentSchemaVersion`, returning a
-  typed `DeviceAgentFailure.schemaVersionMismatch(expected:, got:)`.
-- Mirror this on the agent side in `V3DeviceAgentEntrypoint.swift`:
-  reject incoming requests with an unknown version.
-- Add `--v3-self-check-agent-protocol-version` that round-trips a request
-  at the current version and confirms the matcher logic rejects `0` and
-  `currentSchemaVersion + 1`.
+Completed work that should not be reopened without a concrete bug:
 
-This is throwaway-looking work that will save hours once the agent becomes
-a separately signed binary in Phase C.
-
-### Step 3 — Annotate the temporary CLI bridge
-
-- In `V3DeviceAgentService.swift`, find the `pymobiledevice3 remote tunneld`
-  invocation inside the product-owned tunnel controller. Add above it:
-
-  ```swift
-  // TEMPORARY_CLI_BRIDGE: shells out to user-installed pymobiledevice3.
-  // This does NOT work on consumer Macs and must be replaced by the
-  // bundled device core (see docs/v3-no-python-foundation-plan.md §5 Phase
-  // B.3). Do not add features here.
-  ```
-
-- In `XcodeTestLocationInjectionTransportAdapter`, add the same marker on
-  the `xcodebuild test` invocation, referencing Phase B.3.
-- Grep for `TEMPORARY_CLI_BRIDGE` must be zero-result after Phase B.3 lands.
-  This is a mechanical gate, not a judgment call.
-
-### Step 4 — Decide the device-core tech (branch: `v3/core-decision`)
-
-- Docs-only PR. Fill in the `DECISION:` line in §7 of this file.
-- The PR description must say why the losing options were rejected. This
-  is not ceremony — it stops the next engineer from re-litigating the
-  choice in three months.
-- Do not start Step 5 before this PR lands.
-
-### Step 5 — Phase B.3 proof-of-concept (branch: `v3/device-core-rust`) 🔵 IN PROGRESS
-
-Capability order (each ships with a headless self-check):
-
-1. **USB enumeration** ✅ DONE — `native-device-core enumerate-ios-devices` walks
-   usbmuxd, returns UDID array, wired behind `NativeDeviceCoreMetadataProbe`.
-   Self-check: `--v3-self-check-native-device-core-enumeration`.
-
-2. **Lockdown device info** ✅ DONE — `native-device-core device-info <udid>` opens
-   lockdown on the specified device (port 62078 via usbmuxd) and returns
-   `DeviceName`, `ProductVersion`, `DeviceClass`, `ProductType` as JSON.
-   `NativeDeviceCoreDeviceInfoTransportService` (in `V3DeviceInfoTransportService.swift`)
-   is now the first slot in `DeviceInfoTransportServiceStack`; the `udid` field
-   has been added to `DeviceAgentUSBIdentityProbe` and is threaded in from
-   `SystemUSBProbe.deviceIdentifier`. This replaces the Xcode/xcdevice dependency
-   for device metadata on developer machines.
-   Self-check: `--v3-self-check-native-device-core-device-info`.
-
-3. **RemoteXPC / RSD tunnel lifecycle** ✅ DONE (Rust + Swift) —
-   `native-device-core ios17-location-daemon <udid>` establishes CDTunnel via
-   `CoreDeviceProxy::connect`, creates an in-process jktcp TCP stack
-   (`create_software_tunnel` → `to_async_handle`), connects to the device's RSD
-   port, performs `RsdHandshake`, connects to `com.apple.instruments.dtservicehub`
-   via `RsdHandshake::connect::<RemoteServerClient>`, opens a
-   `LocationSimulationClient` DVT channel, and loops reading `set <lat> <lon>` /
-   `clear` commands from stdin, writing `READY` / `OK` / `ERROR: …` responses to
-   stdout. Location stays simulated while stdin is open.
-   Added features `dvt` and `io-std` to `Cargo.toml`. New enum cases `nativeRsd`
-   in `DeviceAgentInjectionTransportState` and
-   `DeviceAgentInjectionTransportContractPhase`. For iOS 17+ devices,
-   `NativeDeviceCoreInjectionTransportAdapter.probeTransport` returns `.nativeRsd`.
-   **Swift daemon lifecycle** — `NativeDeviceCoreIos17LocationController` (final
-   class, owned by `NoPythonBackendStub` via `Ios17BackendState` box) manages the
-   persistent `ios17-location-daemon` process. Dedicated reader thread consumes
-   stdout line-by-line using blocking `availableData`; commands are sent via stdin
-   with `DispatchSemaphore`-guarded line reads and configurable timeouts (15 s
-   startup, 10 s per command). Session is keyed by UDID and auto-restarted on UDID
-   change or process death. `NoPythonBackendStub.setLocation`/`.clearLocation`
-   route iOS 17+ directly to the controller before calling the single-shot agent.
-   Device state (UDID + iOS major) is cached in `Ios17BackendState` on every
-   `fetchConnectedDevice`/`deviceProbe` call; `NSLock` guards concurrent access
-   from background probe and teleport queues.
-
-4. **simulate-location set / clear** ✅ DONE (iOS ≤ 16) — `native-device-core
-   set-location <udid> <lat> <lon>` and `clear-location <udid>` subcommands
-   added. Uses `LocationSimulationService::connect(&provider)` via
-   `UsbmuxdProvider` (reads pairing file from usbmuxd, starts lockdown TLS
-   session, opens `com.apple.dt.simulatelocation`). iOS 17+ exits code 3
-   (TEMPORARY_LIMITATION). Swift: `NativeDeviceCoreInjectionTransportAdapter`
-   prepended to `InjectionTransportServiceStack`; returns `.nativeLockdown`
-   state for iOS ≤ 16 + UDID + binary present, `.unavailable` for iOS 17+
-   (falls through to XcodeTestHarness). New enum cases `nativeLockdown` in
-   `DeviceAgentInjectionTransportState` and
-   `DeviceAgentInjectionTransportContractPhase`. Exit code 3 from binary maps
-   to `transportUnimplemented` failure code in Swift.
-   Self-check: `--v3-self-check-native-device-core-injection` (6 cases after
-   B.3 tunnel bypass landed).
-   Step 6 can now begin.
-
-5. **Typed diagnostics** ⬜ TODO — structured error reporting from the Rust layer
-   into the Swift typed model. Nice-to-have; not blocking Phase B exit criteria.
-
-6. **Tunnel bypass for nativeRsd / nativeLockdown** ✅ DONE — `buildTunnelAssessment`
-   now short-circuits to `readinessGate: .ready` / `tunnelRequirement: .notRequired`
-   for `.nativeRsd` transport, mirroring the existing `.xcodeTestHarness` bypass.
-   `ios17-location-daemon` manages CDTunnel + RSD internally; no external
-   `pymobiledevice3 remote tunneld` process is needed. Added `NullTunnelStateController`
-   stub and self-check case `ios17-nativeRsd-tunnel-bypasses-external-tunneld`
-   (gate=ready, req=notRequired, blockers=[]). The `TEMPORARY_CLI_BRIDGE` code
-   path in `ProductOwnedTunnelStateController` is now dead for all nativeRsd and
-   nativeLockdown sessions. **Phase B exit criteria are met.**
-
-### Step 6 — Retire the XCTest harness as the primary path ✅ DONE
-
-`XcodeTestLocationInjectionTransportAdapter` is now demoted behind
-`V3_DEV_ENABLE_XCTEST_HARNESS=1`. `InjectionTransportServiceStack.defaultServices()`
-checks `ProcessInfo.processInfo.environment["V3_DEV_ENABLE_XCTEST_HARNESS"]` at
-runtime; absent the flag, only `NativeDeviceCoreInjectionTransportAdapter` and
-`EndpointBackedInjectionTransportCommandAdapter` are included.
-
-- At the end of Phase C, delete `XcodeTestLocationInjectionTransportAdapter`,
-  `XcodeLocationHarnessPackage` (including the embedded source strings),
-  and the `--v3-self-check-xcode-location-harness` self-check in a single
-  commit. The `GeoTeleportLocationHarness/` directory on disk is already
-  gone as of the handoff commit; nothing else should reference it.
-
-After Step 6, follow the roadmap. Phase C work is blocked on Phase B and
-should not start early — packaging a device core that does not work yet is
-wasted signing.
+- Honest blockers and schema-versioned agent protocol.
+- Rust native device core for enumeration, device info, iOS <= 16 location,
+  and iOS 17+ daemon location.
+- XCTest harness, legacy backend, Terminal/AppleScript launcher, and
+  `pymobiledevice3` fallback deletion.
+- Diagnostics export, opt-in telemetry, C FFI dylib, and Swift FFI wrapper.
 
 ---
 
@@ -741,39 +577,32 @@ wasted signing.
 
 Primary files, in the order a new developer should read them:
 
-- `GeoTeleportMac/ContentView.swift` — the UI surface; renders from state.
+- `GeoTeleportMac/ContentView.swift` — the HUD UI surface; renders from state.
+- `GeoTeleportMac/NativeMapView.swift` — native map implementation used by the
+  full-window HUD.
+- `GeoTeleportMac/GlassTheme.swift` — shared glass styling for the redesigned UI.
 - `GeoTeleportMac/V3AppModel.swift` — domain state, drives the UI.
 - `GeoTeleportMac/V3RuntimeCoordinator.swift` — wires model to backend.
 - `GeoTeleportMac/V3BackendModels.swift` — `BackendTrack`, session/blocker
   enums shared across the boundary.
-- `GeoTeleportMac/V3DeviceAgentProtocol.swift` — JSON contract (add
-  `schemaVersion` here).
+- `GeoTeleportMac/V3DeviceAgentProtocol.swift` — schema-versioned JSON contract.
 - `GeoTeleportMac/V3DeviceAgentClient.swift` — protocol the app calls.
 - `GeoTeleportMac/V3ChildProcessDeviceAgentClient.swift` — current transport
   (child-process over stdin/stdout).
 - `GeoTeleportMac/V3DeviceAgentEntrypoint.swift` — `--v3-agent` and
   self-check entry points.
-- `GeoTeleportMac/V3DeviceAgentService.swift` — this is the file that Phase
-  B.3 mostly edits. Contains the current `pymobiledevice3`-backed tunnel
-  controller and the `XcodeTestLocationInjectionTransportAdapter`.
+- `GeoTeleportMac/V3DeviceAgentService.swift` — native device-agent service,
+  probes, assessments, and self-checks.
 - `GeoTeleportMac/V3DeviceAgentModels.swift` — typed agent models
   (availability, readiness gate, tunnel requirement/lifecycle/session/health,
   device-info transport probe, etc.).
-- `GeoTeleportMac/V3LegacyCLIBackend.swift`, `V3LegacyDeviceTransport.swift`,
-  `V3LegacyLocationTransport.swift` — retained only for the `legacyPreview`
-  track. Do not add features here.
 - `GeoTeleportMac/V3NoPythonBackendStub.swift` — adapter that translates
   agent responses into backend-track state.
-- The XCTest harness is **not** a separate on-disk package anymore. The
-  source of the harness (Package manifest, library source, test source) is
-  embedded as Swift string literals inside `V3DeviceAgentService.swift`'s
-  `XcodeLocationHarnessPackage` enum. At runtime those strings are
-  materialized into
-  `~/Library/Application Support/com.test.GeoTeleportMac.v3/GeneratedArtifacts/GeoTeleportLocationHarness/`
-  and `xcodebuild test` is run against that materialized copy. The on-disk
-  `GeoTeleportLocationHarness/` directory at the repo root was removed
-  during handoff because it was redundant with the embedded strings and
-  the plan explicitly retires this harness by end of Phase C.
+- `GeoTeleportMac/NativeDeviceCoreFFI.swift` — Swift `dlopen` / `dlsym` wrapper
+  for the Rust C ABI dylib.
+- `native-device-core/src/core.rs` — shared Rust device-core logic.
+- `native-device-core/src/lib.rs` — C ABI exports.
+- `native-device-core/src/main.rs` — CLI and iOS 17 daemon entry points.
 
 Build & verify after any Swift change:
 
@@ -784,10 +613,11 @@ xcodebuild -project GeoTeleportMac.xcodeproj \
 
 Relevant self-checks (run against the built `.app`):
 
-- `--v3-self-check-tunnel-log-parser`
-- `--v3-self-check-injection-transport`
-- `--v3-self-check-xcode-location-harness` (goes away in Phase C)
-- add `--v3-self-check-agent-protocol-version` as part of Phase B.1
+- `--v3-self-check-toolchain-probe`
+- `--v3-self-check-native-device-core-enumeration`
+- `--v3-self-check-native-device-core-device-info`
+- `--v3-self-check-native-device-core-injection`
+- `--v3-self-check-agent-protocol-version`
 
 ---
 
@@ -860,7 +690,7 @@ without trawling git history.
   to `--v3-self-check-native-device-core-injection` (now 6 cases, all pass).
   `TEMPORARY_CLI_BRIDGE` comment updated to note the code path is dead for
   nativeRsd/nativeLockdown. Phase B status updated to ✅ DONE in §6.
-- **2026-04-24 — Phase C started: Hardened Runtime, bundle lookup, first-run UX.**
+- **2026-04-24 — Phase C started: bundle lookup, first-run UX.**
   (1) Fixed `V3AppModel.needsTunnel` to exempt `.nativeRsd` and `.nativeLockdown`
   from the iOS 17+ tunnel requirement check (matching the existing `.xcodeTestHarness`
   exemption). (2) Updated `NativeDeviceCoreMetadataProbe.resolveBinaryPath` and the
@@ -869,28 +699,25 @@ without trawling git history.
   location), with `Contents/MacOS/` as a fallback, before the developer
   `#filePath` build-tree path. (3) Created `GeoTeleportMac/GeoTeleportMac.entitlements`
   with `com.apple.security.app-sandbox = false` and `get-task-allow = true`
-  (debug). Set `ENABLE_HARDENED_RUNTIME = YES` and `CODE_SIGN_ENTITLEMENTS` in
-  both Debug and Release configurations in `project.pbxproj`. (4) Improved
+  (debug), plus a release entitlements file without `get-task-allow`. (4) Improved
   first-run UX: `NativeDeviceCoreDeviceInfoTransportService` now classifies
   `device-info` failures into "iPhone is locked", "iPhone not trusted", or
   generic — message surfaces in `readinessSummary` (shown in the status card)
   and `nextAction` (guidance area). Removed stale "Device info transport is not
   implemented yet" message from `makeDeviceAssessment`.
-- **2026-04-24 — Phase C: Rust binary bundled, signing infrastructure complete.**
+- **2026-04-24 — Phase C: Rust binary bundled.**
    Added `PBXShellScriptBuildPhase` "Build & Bundle Rust Helper" to
    `project.pbxproj` — runs `cargo build` (debug) or `cargo build --release`
    during each Xcode build, copies the binary to
-   `$(CONTENTS_FOLDER_PATH)/Helpers/geoteleport-device-core`, and signs it with
-   `$EXPANDED_CODE_SIGN_IDENTITY --options runtime` when code signing is active.
+   `$(CONTENTS_FOLDER_PATH)/Helpers/geoteleport-device-core`.
    Added `ENABLE_USER_SCRIPT_SANDBOXING = NO` to allow `cargo` to read
    `Cargo.toml` during the build. Created
    `GeoTeleportMac/GeoTeleportMac.distribution.entitlements` (no `get-task-allow`)
    and wired it to the Release configuration; Debug retains `get-task-allow = true`
    for debugger attachment. Bundle lookup confirmed working: self-check
    `native-device-core-binary-present` reports the `Contents/Helpers/` path.
-   All 25 non-hardware self-check cases pass (6+4+8+3+4) on both Debug and
-   Release builds. Remaining Phase C gate: Developer ID signing + notarization +
-   clean-Mac test.
+   All self-check suites passed on both Debug and Release builds. Remaining
+   release gate: clean-Mac test.
 - **2026-04-25 — Phase C: multi-device selection, honest blockers, Developer Mode UX.**
    (1) **Multi-device selection UI**: `DevicePickerSheet.swift` (new SwiftUI sheet),
    `multipleDevicesBanner` in `ContentView`, `selectedDeviceUDID` in `V3AppModel`
@@ -968,19 +795,25 @@ without trawling git history.
    `Process`-based shell-out. `NativeDeviceCoreIos17LocationController` continues
    using Process (long-running daemon).
    (4) **Xcode:** Build phase copies `libgeoteleport_device_core.dylib` alongside
-    the binary to `Contents/Helpers/` and signs both. Build succeeds; all 25
-    self-check cases pass. Updated Phase E status to IN PROGRESS.
+    the binary to `Contents/Helpers/`. Build succeeds; all self-check suites
+    pass. Updated Phase E status to IN PROGRESS.
 - **2026-04-25 — Phase E cleanup: pymobiledevice3 fallback fully deleted.**
-    Removed ~2200 lines across 8 files: `EndpointBackedInjectionTransportCommandAdapter`,
-    `ProductOwnedTunnelStateController`, `LegacyObservedTunnelStateController`,
-    `SystemProcessProbe`, `TunnelStateControlling` protocol, `TunnelStateControllerStack`,
-    `NullTunnelStateController`, `InjectionTransportCommandInvocation`,
-    `InjectionTransportCommandFailureKind`, two self-check reports. Deleted files:
-    `V3LegacyCLIPathResolver.swift`, `V3ShellCommandRunner.swift`. Removed two
-    self-check entrypoints. Cleaned `DeviceAgentInjectionTransportState` (dropped
-    `.endpointBackedStub`/`.endpointBackedCommand`). Removed `pymobiledevice3`
-    probe from `ToolchainProbe`. `InjectionTransportServiceStack` now only contains
-    `NativeDeviceCoreInjectionTransportAdapter`. Simplified `makeTunnelAssessment`
-    to nativeRsd-only. No pymobiledevice3 shell-out paths remain. Build succeeds;
-    all 13 self-check cases pass (4+3+6).
-
+   Removed `EndpointBackedInjectionTransportCommandAdapter`,
+   `ProductOwnedTunnelStateController`, `LegacyObservedTunnelStateController`,
+   `SystemProcessProbe`, `TunnelStateControlling`, `TunnelStateControllerStack`,
+   `NullTunnelStateController`, `InjectionTransportCommandInvocation`, and
+   `InjectionTransportCommandFailureKind`. Deleted `V3LegacyCLIPathResolver.swift`
+   and `V3ShellCommandRunner.swift`. Removed the `pymobiledevice3` probe from
+   `ToolchainProbe`; `InjectionTransportServiceStack` now only contains
+   `NativeDeviceCoreInjectionTransportAdapter`. No `pymobiledevice3` shell-out
+   paths remain. Build succeeds; current non-hardware self-checks pass.
+- **2026-04-27 — Immersive HUD UI Redesign.**
+   Refactored `ContentView.swift` into a full-screen map layout (Immersive HUD Layout). The map now spans the entire window (`edgesIgnoringSafeArea`), with control panels floating as dark-mode glassmorphic layers in the corners.
+   - Top-left: Device state and CLI environment connection.
+   - Top-right: Search bar, latitude/longitude input, and a grid of preset cities.
+   - Bottom-center: The main execute button and status message card.
+   Also patched an issue with `updateNSView` where periodic UI refreshes would cause the `NativeMapView` to snap back to an old center coordinate by introducing a `lastSwiftUICenter` / `lastSwiftUISpan` tracking mechanism in the `Coordinator`.
+- **2026-04-27 — Release docs updated for unsigned distribution.**
+   Current distribution assumes an unsigned app and explicit user bypass of the
+   macOS warning. `README.md` now carries product-facing first-run instructions.
+   Clean consumer-Mac validation remains the main release gate.

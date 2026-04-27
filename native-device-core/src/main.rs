@@ -4,13 +4,13 @@ use core::{
     clear_location_core, device_info_core, enumerate_ios_devices_core, find_usb_device,
     set_location_core,
 };
-use idevice::ReadWrite;
 use idevice::services::core_device_proxy::CoreDeviceProxy;
 use idevice::services::dvt::location_simulation::LocationSimulationClient;
 use idevice::services::dvt::remote_server::RemoteServerClient;
 use idevice::services::rsd::RsdHandshake;
 use idevice::usbmuxd::UsbmuxdAddr;
 use idevice::IdeviceService;
+use idevice::ReadWrite;
 use std::env;
 use std::process::ExitCode;
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -47,7 +47,11 @@ async fn cmd_enumerate() -> ExitCode {
             ExitCode::SUCCESS
         }
         Err(e) => {
-            eprintln!("{e}");
+            let resp = core::StatusResponse {
+                status: core::CommandStatus::Error,
+                error: Some(e),
+            };
+            println!("{}", serde_json::to_string(&resp).unwrap());
             ExitCode::from(1)
         }
     }
@@ -64,7 +68,11 @@ async fn cmd_device_info(udid: Option<&str>) -> ExitCode {
             ExitCode::SUCCESS
         }
         Err(e) => {
-            eprintln!("{e}");
+            let resp = core::StatusResponse {
+                status: core::CommandStatus::Error,
+                error: Some(e),
+            };
+            println!("{}", serde_json::to_string(&resp).unwrap());
             ExitCode::from(1)
         }
     }
@@ -75,14 +83,25 @@ async fn cmd_set_location(udid: Option<&str>, lat: Option<&str>, lon: Option<&st
         eprintln!("usage: geoteleport-device-core set-location <udid> <lat> <lon>");
         return ExitCode::from(64);
     };
-    let (Ok(lat), Ok(lon)) = (lat.parse::<f64>(), lon.parse::<f64>()) else {
-        eprintln!("set-location: invalid coordinates: lat={lat} lon={lon}");
+    let (Ok(lat_val), Ok(lon_val)) = (lat.parse::<f64>(), lon.parse::<f64>()) else {
+        let resp = core::StatusResponse {
+            status: core::CommandStatus::Error,
+            error: Some(format!("invalid coordinates: lat={lat} lon={lon}")),
+        };
+        println!("{}", serde_json::to_string(&resp).unwrap());
         return ExitCode::from(64);
     };
-    match set_location_core(udid, lat, lon).await {
-        Ok(_) => ExitCode::SUCCESS,
+    match set_location_core(udid, lat_val, lon_val).await {
+        Ok(output) => {
+            println!("{output}");
+            ExitCode::SUCCESS
+        }
         Err(e) => {
-            eprintln!("{e}");
+            let resp = core::StatusResponse {
+                status: core::CommandStatus::Error,
+                error: Some(e),
+            };
+            println!("{}", serde_json::to_string(&resp).unwrap());
             ExitCode::from(1)
         }
     }
@@ -94,9 +113,16 @@ async fn cmd_clear_location(udid: Option<&str>) -> ExitCode {
         return ExitCode::from(64);
     };
     match clear_location_core(udid).await {
-        Ok(_) => ExitCode::SUCCESS,
+        Ok(output) => {
+            println!("{output}");
+            ExitCode::SUCCESS
+        }
         Err(e) => {
-            eprintln!("{e}");
+            let resp = core::StatusResponse {
+                status: core::CommandStatus::Error,
+                error: Some(e),
+            };
+            println!("{}", serde_json::to_string(&resp).unwrap());
             ExitCode::from(1)
         }
     }
@@ -189,16 +215,22 @@ async fn ios17_location_daemon(udid: &str) -> ExitCode {
         match parts.as_slice() {
             ["set", lat_str, lon_str] => match (lat_str.parse::<f64>(), lon_str.parse::<f64>()) {
                 (Ok(lat), Ok(lon)) => match loc_client.set(lat, lon).await {
-                    Ok(()) => println!("OK"),
-                    Err(e) => println!("ERROR: {e}"),
+                    Ok(()) => println!(r#"{{"status":"ok"}}"#),
+                    Err(e) => println!(
+                        r#"{{"status":"error","error":{}}}"#,
+                        serde_json::to_string(&e.to_string()).unwrap()
+                    ),
                 },
-                _ => println!("ERROR: invalid coordinates"),
+                _ => println!(r#"{{"status":"error","error":"invalid coordinates"}}"#),
             },
             ["clear"] => match loc_client.clear().await {
-                Ok(()) => println!("OK"),
-                Err(e) => println!("ERROR: {e}"),
+                Ok(()) => println!(r#"{{"status":"ok"}}"#),
+                Err(e) => println!(
+                    r#"{{"status":"error","error":{}}}"#,
+                    serde_json::to_string(&e.to_string()).unwrap()
+                ),
             },
-            _ => println!("ERROR: unknown command"),
+            _ => println!(r#"{{"status":"error","error":"unknown command"}}"#),
         }
     }
 

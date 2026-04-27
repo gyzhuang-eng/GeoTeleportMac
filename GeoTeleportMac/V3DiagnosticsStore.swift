@@ -1,9 +1,16 @@
 import Combine
 import Foundation
 
+struct DiagnosticEntry: Identifiable, Equatable {
+    let id = UUID()
+    let text: String
+}
+
 @MainActor
 final class V3DiagnosticsStore: ObservableObject {
-    @Published var lines: [String]
+    @Published var entries: [DiagnosticEntry] = []
+    var lines: [String] { entries.map(\.text) }
+
     let maxLines: Int
     private let repeatWindow: TimeInterval
     private var lastSeenAtByMessage: [String: Date] = [:]
@@ -18,7 +25,7 @@ final class V3DiagnosticsStore: ObservableObject {
     ) {
         self.maxLines = maxLines
         self.repeatWindow = repeatWindow
-        self.lines = initialLines
+        self.entries = initialLines.map { DiagnosticEntry(text: $0) }
     }
 
     func append(_ message: String) {
@@ -32,9 +39,9 @@ final class V3DiagnosticsStore: ObservableObject {
         formatter.dateFormat = "HH:mm:ss.SSS"
         let timestamp = formatter.string(from: now)
         let line = "[\(timestamp)] \(message)"
-        lines.append(line)
-        if lines.count > maxLines {
-            lines.removeFirst(lines.count - maxLines)
+        entries.append(DiagnosticEntry(text: line))
+        if entries.count > maxLines {
+            entries.removeFirst(entries.count - maxLines)
         }
     }
 
@@ -45,7 +52,7 @@ final class V3DiagnosticsStore: ObservableObject {
     }
 
     func clear() {
-        lines = [">>> LOG CLEARED."]
+        entries = [DiagnosticEntry(text: ">>> LOG CLEARED.")]
         lastSeenAtByMessage.removeAll()
     }
 }

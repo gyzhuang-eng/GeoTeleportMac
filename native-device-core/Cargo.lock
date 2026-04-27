@@ -427,6 +427,8 @@ name = "geoteleport-device-core"
 version = "0.1.0"
 dependencies = [
  "idevice",
+ "serde",
+ "serde_json",
  "tokio",
 ]
 

@@ -497,9 +497,10 @@ private struct SystemUSBProbe {
     var allDevices: [DevicePickerEntry] = []
 
     static func detectIPhone() -> SystemUSBProbe {
+        let usbProbe: SystemUSBProbe
         switch detectViaSystemProfiler() {
         case .success(let probe):
-            return enrichWithXcodeMetadata(probe)
+            usbProbe = probe
         case .failure(let profilerFailure):
             let output = runCaptured(
                 executable: "/usr/sbin/ioreg",
@@ -510,10 +511,10 @@ private struct SystemUSBProbe {
             case .success(let text):
                 let isConnected = text.localizedCaseInsensitiveContains("iPhone")
                 let displayName = fallbackDisplayName(in: text)
-                let fallbackProbe = SystemUSBProbe(
+                usbProbe = SystemUSBProbe(
                     isConnected: isConnected,
                     displayName: displayName,
-                    deviceIdentifier: nil,
+                    deviceIdentifier: isUDID(displayName) ? displayName : nil,
                     serialSuffix: nil,
                     speed: nil,
                     vendorID: nil,
@@ -534,9 +535,8 @@ private struct SystemUSBProbe {
                         )
                     ]
                 )
-                return enrichWithXcodeMetadata(fallbackProbe)
             case .failure(let failure):
-                return SystemUSBProbe(
+                usbProbe = SystemUSBProbe(
                     isConnected: false,
                     displayName: nil,
                     deviceIdentifier: nil,
@@ -556,6 +556,7 @@ private struct SystemUSBProbe {
                 )
             }
         }
+        return enrichWithXcodeMetadata(usbProbe)
     }
 
     private static func detectViaSystemProfiler() -> Result<SystemUSBProbe, DeviceAgentFailure> {
@@ -598,7 +599,7 @@ private struct SystemUSBProbe {
                     SystemUSBProbe(
                         isConnected: true,
                         displayName: match.displayName,
-                        deviceIdentifier: nil,
+                        deviceIdentifier: isUDID(match.displayName) ? match.displayName : nil,
                         serialSuffix: match.serialSuffix,
                         speed: match.speed,
                         vendorID: match.vendorID,
@@ -616,26 +617,10 @@ private struct SystemUSBProbe {
                 )
             }
 
-            return .success(
-                SystemUSBProbe(
-                    isConnected: false,
-                    displayName: nil,
-                    deviceIdentifier: nil,
-                    serialSuffix: nil,
-                    speed: nil,
-                    vendorID: nil,
-                    productID: nil,
-                    iosVersion: nil,
-                    matchedDeviceCount: 0,
-                    source: .systemProfiler,
-                    events: [
-                        DeviceAgentDiagnosticEvent(
-                            level: .info,
-                            message: "system_profiler did not find an attached iPhone"
-                        )
-                    ]
-                )
-            )
+            return .failure(DeviceAgentFailure(
+                code: .agentUnavailable,
+                message: "system_profiler did not find any attached Apple mobile devices."
+            ))
         case .failure(let failure):
             return .failure(failure)
         }
@@ -694,9 +679,26 @@ private struct SystemUSBProbe {
         return text.localizedCaseInsensitiveContains("iPhone") ? "iPhone" : nil
     }
 
+    private static func isUDID(_ value: String?) -> Bool {
+        guard let value = value else { return false }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        // 40-character hex UDID (older devices)
+        if trimmed.count == 40 && trimmed.range(of: "^[0-9a-fA-F]{40}$", options: .regularExpression) != nil {
+            return true
+        }
+        // 8-17 character UDID with hyphen (e.g. 00008101-001C38E60128001E)
+        if trimmed.contains("-") && trimmed.count >= 9 && trimmed.count <= 25 {
+            return true
+        }
+        return false
+    }
+
     private static func isSupportedAppleMobileName(_ name: String, manufacturer: String?) -> Bool {
         let lowercasedName = name.lowercased()
         if lowercasedName.contains("iphone") || lowercasedName.contains("ipad") || lowercasedName.contains("ipod") {
+            return true
+        }
+        if isUDID(name) {
             return true
         }
         if let manufacturer, manufacturer.lowercased().contains("apple"), lowercasedName == "iphone" {
@@ -713,8 +715,6 @@ private struct SystemUSBProbe {
     }
 
     private static func enrichWithXcodeMetadata(_ probe: SystemUSBProbe) -> SystemUSBProbe {
-        guard probe.isConnected else { return probe }
-
         // Preferred UDID set by the main process (UserDefaults → env var) for multi-device selection.
         let preferredUDID = ProcessInfo.processInfo.environment["GTM_PREFERRED_DEVICE_UDID"]
 
@@ -738,15 +738,15 @@ private struct SystemUSBProbe {
                     ? "Native device-core POC did not report a USB-attached iPhone/iPad session for metadata enrichment"
                     : "Native device-core POC metadata did not match the current USB probe strongly enough to enrich iOS version"
                 return SystemUSBProbe(
-                    isConnected: probe.isConnected,
-                    displayName: probe.displayName,
-                    deviceIdentifier: probe.deviceIdentifier,
+                    isConnected: probe.isConnected || !devices.isEmpty,
+                    displayName: probe.displayName ?? devices.first?.name,
+                    deviceIdentifier: probe.deviceIdentifier ?? devices.first?.identifier,
                     serialSuffix: probe.serialSuffix,
                     speed: probe.speed,
                     vendorID: probe.vendorID,
                     productID: probe.productID,
                     iosVersion: probe.iosVersion,
-                    matchedDeviceCount: probe.matchedDeviceCount,
+                    matchedDeviceCount: max(probe.matchedDeviceCount, devices.count),
                     source: probe.source,
                     events: probe.events + [DeviceAgentDiagnosticEvent(level: .warning, message: message)],
                     allDevices: allEntries
@@ -775,12 +775,32 @@ private struct SystemUSBProbe {
                 vendorID: probe.vendorID,
                 productID: probe.productID,
                 iosVersion: match.iosVersion ?? probe.iosVersion,
-                matchedDeviceCount: probe.matchedDeviceCount,
+                matchedDeviceCount: max(probe.matchedDeviceCount, devices.count),
                 source: probe.source,
                 events: probe.events + [event],
                 allDevices: allEntries
             )
         case .failure(let failure):
+            guard probe.isConnected else {
+                return SystemUSBProbe(
+                    isConnected: false,
+                    displayName: probe.displayName,
+                    deviceIdentifier: probe.deviceIdentifier,
+                    serialSuffix: probe.serialSuffix,
+                    speed: probe.speed,
+                    vendorID: probe.vendorID,
+                    productID: probe.productID,
+                    iosVersion: probe.iosVersion,
+                    matchedDeviceCount: probe.matchedDeviceCount,
+                    source: probe.source,
+                    events: probe.events + [
+                        DeviceAgentDiagnosticEvent(
+                            level: .warning,
+                            message: "Native device-core POC unavailable: \(failure.message)"
+                        )
+                    ]
+                )
+            }
             switch XcodeDeviceMetadataProbe.fetchAttachedMobileDevices() {
             case .success(let devices):
                 guard let match = XcodeDeviceMetadataProbe.match(for: probe, in: devices) else {
@@ -915,6 +935,12 @@ private enum XcodeDeviceMetadataProbe {
     ) -> XcodeAttachedAppleDevice? {
         guard !devices.isEmpty else { return nil }
 
+        if let probeUDID = probe.deviceIdentifier, !probeUDID.isEmpty {
+            if let match = devices.first(where: { $0.identifier == probeUDID }) {
+                return match
+            }
+        }
+
         if let displayName = normalizedName(probe.displayName) {
             let exactMatches = devices.filter { normalizedName($0.name) == displayName }
             if exactMatches.count == 1 {
@@ -922,7 +948,7 @@ private enum XcodeDeviceMetadataProbe {
             }
         }
 
-        if probe.matchedDeviceCount == 1, devices.count == 1 {
+        if (probe.matchedDeviceCount == 1 || probe.matchedDeviceCount == 0), devices.count == 1 {
             return devices[0]
         }
 
@@ -1117,7 +1143,7 @@ struct InjectionTransportServiceStack: InjectionTransportServing {
     }
 
     static func defaultServices() -> [any InjectionTransportServing] {
-        var services: [any InjectionTransportServing] = [
+        let services: [any InjectionTransportServing] = [
             NativeDeviceCoreInjectionTransportAdapter()
         ]
         return services
@@ -1410,19 +1436,24 @@ private func nativeDeviceCoreRunForInjection(
     arguments: [String]
 ) -> Result<Void, DeviceAgentFailure> {
     let task = Process()
+    let stdoutPipe = Pipe()
     let stderrPipe = Pipe()
     task.executableURL = URL(fileURLWithPath: binaryPath)
     task.arguments = arguments
-    task.standardOutput = FileHandle.nullDevice
+    task.standardOutput = stdoutPipe
     task.standardError = stderrPipe
     do {
         try task.run()
         task.waitUntilExit()
+        let outputData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
         let errorData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
         let status = task.terminationStatus
         guard status == 0 else {
-            let msg = (String(data: errorData, encoding: .utf8) ?? "")
+            let output = (String(data: outputData, encoding: .utf8) ?? "")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
+            let errorOutput = (String(data: errorData, encoding: .utf8) ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let msg = nativeDeviceCoreErrorMessage(from: output) ?? (errorOutput.isEmpty ? output : errorOutput)
             let code: DeviceAgentErrorCode = status == 3
                 ? .transportUnimplemented
                 : .agentUnavailable
@@ -1495,6 +1526,15 @@ private struct NullInjectionTransportService: InjectionTransportServing {
             )
         )
     }
+}
+
+private func nativeDeviceCoreErrorMessage(from output: String) -> String? {
+    guard let data = output.data(using: .utf8),
+          let object = try? JSONSerialization.jsonObject(with: data) as? [String: String],
+          object["status"] == "error" else {
+        return nil
+    }
+    return object["error"]
 }
 
 // Tunnel controller stub used in self-checks: always returns inactive/no-product-owned state
@@ -1605,11 +1645,12 @@ private struct DeviceAgentAssessmentFactory {
         }
 
         let orderedNextAction = deduplicated(nextActions).joined(separator: " ")
+        let nextScope: DeviceAgentRefreshScope = (readinessGate == .ready || readinessGate == .tunnelOwnership || readinessGate == .injectionTransport) ? .tunnelOnly : .deviceOnly
         return DeviceAgentSessionAssessment(
             readinessGate: readinessGate,
             readinessSummary: readinessSummary,
             refreshIntent: DeviceAgentRefreshIntent(
-                scope: .deviceOnly,
+                scope: nextScope,
                 probeFocus: probe.matchedDeviceCount > 1 ? .selection : .deviceInfo
             ),
             recommendedProbeFocus: probe.matchedDeviceCount > 1 ? .selection : .deviceInfo,
@@ -1644,26 +1685,28 @@ private struct DeviceAgentAssessmentFactory {
         )
 
         // nativeRsd = ios17-location-daemon owns the CDTunnel + RSD session internally.
-        // No external tunnel daemon is needed.
-        if injectionTransportProbeResult.transportState == .nativeRsd {
+        // nativeLockdown = iOS 16 and below use usbmuxd directly.
+        // No external tunnel daemon is needed for either.
+        if injectionTransportProbeResult.transportState == .nativeRsd || injectionTransportProbeResult.transportState == .nativeLockdown {
+            let isIos17 = injectionTransportProbeResult.transportState == .nativeRsd
             let overriddenRequirement = DeviceAgentTunnelRequirementResult(
                 state: .notRequired,
                 sourceMetadataSessionID: metadataSession?.sessionID,
-                summary: "iOS 17+ tunnel is managed internally by ios17-location-daemon (CDTunnel + jktcp + RSD); no external tunneld process is required.",
-                nextAction: "No tunnel action needed. NativeDeviceCoreIos17LocationController starts the daemon on first set/clear call.",
+                summary: isIos17 ? "iOS 17+ tunnel is managed internally by ios17-location-daemon (CDTunnel + jktcp + RSD); no external tunneld process is required." : "iOS 16 and below use direct lockdown over usbmuxd; no tunnel is required.",
+                nextAction: isIos17 ? "No tunnel action needed. NativeDeviceCoreIos17LocationController starts the daemon on first set/clear call." : "No tunnel action needed. Native lockdown operates directly.",
                 confidence: "high"
             )
             let internalLifecycleResult = DeviceAgentTunnelLifecycleResult(
                 state: .noProductOwnedTunnel,
-                summary: "ios17-location-daemon manages its own tunnel lifecycle internally; no product-owned external tunnel session is needed.",
-                nextAction: "No external tunnel lifecycle action required for nativeRsd transport.",
+                summary: isIos17 ? "ios17-location-daemon manages its own tunnel lifecycle internally; no product-owned external tunnel session is needed." : "Native lockdown manages its own connection internally.",
+                nextAction: "No external tunnel lifecycle action required for \(injectionTransportProbeResult.transportState.rawValue) transport.",
                 confidence: "high"
             )
             return DeviceAgentSessionAssessment(
                 readinessGate: .ready,
-                readinessSummary: "Native RSD injection via ios17-location-daemon is self-contained; the session is ready without an external tunneld.",
+                readinessSummary: isIos17 ? "Native RSD injection via ios17-location-daemon is self-contained; the session is ready without an external tunneld." : "Native lockdown injection is self-contained; the session is ready without an external tunneld.",
                 refreshIntent: DeviceAgentRefreshIntent(
-                    scope: .deviceOnly,
+                    scope: .tunnelOnly,
                     probeFocus: .deviceInfo
                 ),
                 recommendedProbeFocus: .deviceInfo,
@@ -1679,7 +1722,7 @@ private struct DeviceAgentAssessmentFactory {
                 tunnelHealthResult: nil,
                 tunnelEndpointResult: nil,
                 injectionTransportProbeResult: injectionTransportProbeResult,
-                nextAction: "Call set or clear location; NativeDeviceCoreIos17LocationController will start the daemon on first use.",
+                nextAction: isIos17 ? "Call set or clear location; NativeDeviceCoreIos17LocationController will start the daemon on first use." : "Call set or clear location; the native device core binary will execute directly.",
                 blockerCodes: [],
                 blockers: [],
                 confidence: "high"
@@ -2202,6 +2245,31 @@ final class NativeDeviceCoreIos17LocationController {
                 message: "ios17-location-daemon: no response to '\(op)' on \(udid) (process may have died)."
             ))
         }
+
+        // Try parsing as JSON first (new structured format)
+        if let data = response.data(using: .utf8),
+           let obj = try? JSONSerialization.jsonObject(with: data) as? [String: String] {
+            let status = obj["status"]
+            if status == "ok" {
+                return .success(DeviceAgentTeleportResult(
+                    response: TeleportResponse(stdout: response, stderr: "", exitCode: 0),
+                    events: [DeviceAgentDiagnosticEvent(level: .info, message: "ios17-location-daemon: \(op) succeeded on \(udid).")]
+                ))
+            } else if status == "error" {
+                let detail = obj["error"] ?? response
+                V3TelemetryStore.shared.record(
+                    type: .ios17DaemonCommandFailure,
+                    summary: "ios17-location-daemon: \(op) failed",
+                    errorMessage: detail
+                )
+                return .failure(DeviceAgentFailure(
+                    code: .transportExecutionFailed,
+                    message: "ios17-location-daemon: \(op) on \(udid) failed: \(detail)"
+                ))
+            }
+        }
+
+        // Fallback: handle legacy OK/ERROR lines
         if response == "OK" {
             return .success(DeviceAgentTeleportResult(
                 response: TeleportResponse(stdout: "OK", stderr: "", exitCode: 0),

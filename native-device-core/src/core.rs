@@ -2,35 +2,79 @@ use idevice::services::lockdown::LockdownClient;
 use idevice::services::simulate_location::LocationSimulationService;
 use idevice::usbmuxd::{Connection, UsbmuxdAddr, UsbmuxdConnection, UsbmuxdDevice};
 use idevice::IdeviceService;
+use serde::{Deserialize, Serialize};
+
+// ── Models ──────────────────────────────────────────────────────────
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceEntry {
+    pub simulator: bool,
+    pub name: String,
+    pub identifier: String,
+    pub platform: String,
+    pub interface: String,
+    pub operating_system_version: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceInfo {
+    pub udid: String,
+    pub device_name: Option<String>,
+    pub product_version: Option<String>,
+    pub unique_device_id: Option<String>,
+    pub device_class: Option<String>,
+    pub product_type: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "lowercase")]
+pub enum CommandStatus {
+    Ok,
+    Error,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct StatusResponse {
+    pub status: CommandStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
 
 // ── Shared core logic ───────────────────────────────────────────────
 
 pub async fn enumerate_ios_devices_core() -> Result<String, String> {
-    let mut connection = UsbmuxdConnection::default()
-        .await
-        .map_err(|e| format!("failed to connect to usbmuxd: {e}"))?;
+    let mut connection = match UsbmuxdConnection::default().await {
+        Ok(connection) => connection,
+        Err(error) if is_empty_enumeration_error(&error.to_string()) => {
+            return Ok("[]".to_string());
+        }
+        Err(error) => return Err(format!("failed to connect to usbmuxd: {error}")),
+    };
 
-    let devices = connection
-        .get_devices()
-        .await
-        .map_err(|e| format!("failed to enumerate iOS devices: {e}"))?;
+    let devices = match connection.get_devices().await {
+        Ok(devices) => devices,
+        Err(error) if is_empty_enumeration_error(&error.to_string()) => {
+            return Ok("[]".to_string());
+        }
+        Err(error) => return Err(format!("failed to enumerate iOS devices: {error}")),
+    };
 
-    let usb_devices: Vec<String> = devices
+    let usb_devices: Vec<DeviceEntry> = devices
         .into_iter()
         .filter(|d| matches!(d.connection_type, Connection::Usb))
-        .map(|device| {
-            format!(
-                concat!(
-                    r#"{{"simulator":false,"name":"{}","identifier":"{}","#,
-                    r#""platform":"com.apple.platform.iphoneos","interface":"usb","#,
-                    r#""operatingSystemVersion":null}}"#
-                ),
-                device.udid, device.udid
-            )
+        .map(|device| DeviceEntry {
+            simulator: false,
+            name: device.udid.clone(),
+            identifier: device.udid,
+            platform: "com.apple.platform.iphoneos".to_string(),
+            interface: "usb".to_string(),
+            operating_system_version: None,
         })
         .collect();
 
-    Ok(format!("[{}]", usb_devices.join(",")))
+    serde_json::to_string(&usb_devices).map_err(|e| format!("failed to serialize devices: {e}"))
 }
 
 pub async fn device_info_core(udid: &str) -> Result<String, String> {
@@ -41,30 +85,26 @@ pub async fn device_info_core(udid: &str) -> Result<String, String> {
         .map_err(|e| format!("failed to connect to usbmuxd: {e}"))?;
 
     let idevice = connection
-        .connect_to_device(device.device_id, LockdownClient::LOCKDOWND_PORT, "geoteleport")
+        .connect_to_device(
+            device.device_id,
+            LockdownClient::LOCKDOWND_PORT,
+            "geoteleport",
+        )
         .await
         .map_err(|e| format!("failed to connect to lockdown service: {e}"))?;
 
     let mut lockdown = LockdownClient::new(idevice);
 
-    let device_name = lockdown_string(&mut lockdown, "DeviceName").await;
-    let product_version = lockdown_string(&mut lockdown, "ProductVersion").await;
-    let unique_device_id = lockdown_string(&mut lockdown, "UniqueDeviceID").await;
-    let device_class = lockdown_string(&mut lockdown, "DeviceClass").await;
-    let product_type = lockdown_string(&mut lockdown, "ProductType").await;
+    let info = DeviceInfo {
+        udid: udid.to_string(),
+        device_name: lockdown_string(&mut lockdown, "DeviceName").await,
+        product_version: lockdown_string(&mut lockdown, "ProductVersion").await,
+        unique_device_id: lockdown_string(&mut lockdown, "UniqueDeviceID").await,
+        device_class: lockdown_string(&mut lockdown, "DeviceClass").await,
+        product_type: lockdown_string(&mut lockdown, "ProductType").await,
+    };
 
-    Ok(format!(
-        concat!(
-            r#"{{"udid":{},"deviceName":{},"productVersion":{},"#,
-            r#""uniqueDeviceID":{},"deviceClass":{},"productType":{}}}"#
-        ),
-        json_str(udid),
-        json_opt(device_name.as_deref()),
-        json_opt(product_version.as_deref()),
-        json_opt(unique_device_id.as_deref()),
-        json_opt(device_class.as_deref()),
-        json_opt(product_type.as_deref()),
-    ))
+    serde_json::to_string(&info).map_err(|e| format!("failed to serialize device info: {e}"))
 }
 
 pub async fn set_location_core(udid: &str, lat: f64, lon: f64) -> Result<String, String> {
@@ -88,7 +128,11 @@ pub async fn set_location_core(udid: &str, lat: f64, lon: f64) -> Result<String,
         .await
         .map_err(|e| format!("failed to set location: {e}"))?;
 
-    Ok("{\"status\":\"ok\"}".to_string())
+    serde_json::to_string(&StatusResponse {
+        status: CommandStatus::Ok,
+        error: None,
+    })
+    .map_err(|e| format!("failed to serialize status: {e}"))
 }
 
 pub async fn clear_location_core(udid: &str) -> Result<String, String> {
@@ -112,7 +156,11 @@ pub async fn clear_location_core(udid: &str) -> Result<String, String> {
         .await
         .map_err(|e| format!("failed to clear location: {e}"))?;
 
-    Ok("{\"status\":\"ok\"}".to_string())
+    serde_json::to_string(&StatusResponse {
+        status: CommandStatus::Ok,
+        error: None,
+    })
+    .map_err(|e| format!("failed to serialize status: {e}"))
 }
 
 // ── Shared helpers ──────────────────────────────────────────────────
@@ -152,13 +200,6 @@ pub async fn lockdown_string(lockdown: &mut LockdownClient, key: &str) -> Option
         .and_then(|v| v.as_string().map(|s| s.to_owned()))
 }
 
-pub fn json_str(s: &str) -> String {
-    format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
-}
-
-pub fn json_opt(s: Option<&str>) -> String {
-    match s {
-        Some(s) => json_str(s),
-        None => "null".to_owned(),
-    }
+fn is_empty_enumeration_error(message: &str) -> bool {
+    message.contains("device socket io failed") || message.contains("Connection refused")
 }
