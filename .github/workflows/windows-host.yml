@@ -57,5 +57,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: geoteleport-windows-x64
-          path: windows-host/GeoTeleportWindows/bin/Release/net8.0-windows/win-x64/publish/**
+          path: dist/windows/GeoTeleportWindows-win-x64/**
           if-no-files-found: error

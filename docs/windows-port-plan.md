@@ -5,6 +5,10 @@ reference behavior: one USB-connected iPhone, no Python/Xcode/Homebrew-style
 toolchain, bundled native device core, diagnostics export, and user-actionable
 failure states.
 
+Current status as of 2026-04-28: the Windows package baseline is working and
+has been validated locally. Remaining Windows work is installer selection,
+clean-machine validation, and diagnostics hardening.
+
 ## Initial Direction
 
 Use the existing Rust `native-device-core` as the shared device layer. It
@@ -17,16 +21,21 @@ we prove the native-core and USB path. The host lives in
 `windows-host/GeoTeleportWindows` and calls `geoteleport_device_core.dll` through
 the existing C ABI.
 
-- Prove `native-device-core` compiles for Windows as a CLI plus DLL.
-- Prove USB enumeration and lockdown device-info on a Windows machine with
-  Apple Mobile Device Support installed.
-- Decide whether iOS 17+ RSD can ride the same host USB stack or needs a driver
-  assistant path.
-- Keep the Windows UI thin until the USB story is proven.
+- ✅ Prove `native-device-core` compiles for Windows as a CLI plus DLL.
+- ✅ Publish a self-contained Windows host folder.
+- ✅ Validate the host package locally on Windows.
+- 🟡 Prove USB enumeration and lockdown device-info on a clean Windows machine
+  with only Apple Mobile Device Support installed.
+- 🟡 Decide whether iOS 17+ RSD can ride the same host USB stack or needs a
+  driver assistant path.
+- 🟡 Keep the Windows UI thin until the installer and dependency story are
+  proven.
 
 ## Work Packages
 
 ### F1 — Rust Core Windows Build
+
+Status: baseline done.
 
 - Local Windows command:
 
@@ -54,10 +63,13 @@ the existing C ABI.
   - `gte_set_location`
   - `gte_clear_location`
   - `gte_free_string`
-- Current local blocker: this macOS machine does not have `rustup`, so Windows
-  target installation / cross-build validation must run on Windows or CI.
+- Current note: Windows build has been validated on a real Windows machine.
+  CI can catch compile/package regressions, but hardware behavior still needs
+  real Windows + iPhone validation.
 
 ### F2 — Host USB Baseline
+
+Status: partially validated; clean-machine dependency story still open.
 
 - Test with Apple Mobile Device Support installed from iTunes / Apple Devices.
 - Record whether usbmuxd-compatible access is enough for:
@@ -80,6 +92,9 @@ Implemented host capabilities:
 - For iOS 17+, fall back to `geoteleport-device-core.exe ios17-location-daemon`
   when the FFI reports that the daemon path is required.
 - Export local diagnostics as a text file.
+- Chinese-localized WebView UI with map, presets, status card, and collapsible
+  log.
+- Package output under `dist/windows/GeoTeleportWindows-win-x64`.
 
 Run/publish command:
 
@@ -96,17 +111,39 @@ Longer-term UI criteria still apply if this graduates to WinUI:
 
 ### F4 — Installer
 
-Installer decision is blocked on F2:
+Status: not started.
+
+Installer decision is blocked on clean-machine F2:
 
 - If Apple Mobile Device Support is sufficient, ship a normal app installer and
   document that dependency clearly.
 - If a custom driver path is required, treat driver setup as its own first-run
   workflow and support artifact category.
 
-Current packaging state: `publish_windows_host.ps1` creates a self-contained
-publish directory containing `GeoTeleportWindows.exe`,
-`geoteleport_device_core.dll`, and the CLI helper. MSI/MSIX/EXE installer
-selection remains blocked on F2.
+Current packaging state: `publish_windows_host.ps1` creates:
+
+```text
+dist/windows/GeoTeleportWindows-win-x64/
+  GeoTeleportWindows.exe
+  geoteleport_device_core.dll
+  geoteleport-device-core.exe
+  wwwroot/
+```
+
+MSI/MSIX/EXE installer selection remains blocked on F2.
+
+### F5 — Windows Diagnostics
+
+Status: basic only.
+
+Current diagnostics export includes host OS basics, selected device UDID, and UI
+log text. Still needed:
+
+- Native-core result JSON history.
+- Daemon stderr/stdout capture summary.
+- Apple Mobile Device Support detection.
+- Package version and build timestamp.
+- Clear next-action guidance for missing Apple device services.
 
 ## Definition of Done
 
@@ -116,3 +153,4 @@ selection remains blocked on F2.
 - iOS 17+ set/clear works through the bundled daemon helper or returns a typed,
   user-actionable blocker.
 - Diagnostics export includes Windows host USB state and native-core errors.
+- Installer is selected and produces a user-facing artifact.

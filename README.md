@@ -11,11 +11,11 @@ GeoTeleportMac is a native macOS SwiftUI app for setting a USB-connected iPhone'
 - Multi-device selection, diagnostics export, debug log, and opt-in device-core telemetry are wired.
 - Distribution is currently unsigned; users must intentionally bypass the macOS first-run warning.
 
-See [docs/v3-no-python-foundation-plan.md](docs/v3-no-python-foundation-plan.md) for the active development handoff and release checklist.
+See [docs/current-development-status.md](docs/current-development-status.md) for the current handoff, remaining work, and release checklist.
 
 ## Build
 
-Use Xcode's standard DerivedData location. Do not pass a project-local `-derivedDataPath`.
+For normal development, use Xcode's standard DerivedData location:
 
 ```bash
 cd native-device-core
@@ -56,6 +56,14 @@ Create a local unsigned DMG from a Release build:
 
 ```bash
 ./build_dmg.sh
+```
+
+The macOS release artifacts are written to:
+
+```text
+dist/macos/
+  GeoTeleportMacV3.app
+  GeoTeleportMacV3.dmg
 ```
 
 ## Windows 核心构建
@@ -121,7 +129,8 @@ native-device-core/
   src/lib.rs                        C ABI exports
   src/main.rs                       CLI and iOS 17 daemon entry points
 docs/
-  v3-no-python-foundation-plan.md   active development handoff
+  current-development-status.md     current handoff and remaining work
+  v3-no-python-foundation-plan.md   historical V3 architecture plan
   windows-port-plan.md              Phase F Windows port plan
 ```
 

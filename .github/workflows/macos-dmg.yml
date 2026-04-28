@@ -11,7 +11,7 @@ on:
       - ".github/workflows/macos-dmg.yml"
   push:
     branches:
-      - "v3/device-core-rust"
+      - "v3/windows-host"
     paths:
       - "GeoTeleportMac/**"
       - "GeoTeleportMac.xcodeproj/**"
@@ -49,5 +49,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: GeoTeleportMacV3-unsigned-dmg
-          path: GeoTeleportMacV3.dmg
+          path: dist/macos/GeoTeleportMacV3.dmg
           if-no-files-found: error
