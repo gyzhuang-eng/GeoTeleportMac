@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>GeoTeleport Windows</title>
+  <title>GeoTeleport Windows版</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="style.css">
 </head>
@@ -22,23 +22,23 @@
         <section class="glass-panel device-card">
           <div class="device-icon" id="device-icon">⌁</div>
           <div class="device-copy">
-            <div class="mono-title" id="hardware-title">NO DEVICE</div>
-            <div class="muted-line" id="hardware-subtitle">Plug in via USB and trust this computer.</div>
+            <div class="mono-title" id="hardware-title">未连接设备</div>
+            <div class="muted-line" id="hardware-subtitle">请通过 USB 连接并信任这台电脑。</div>
           </div>
         </section>
 
         <section class="glass-panel env-card">
           <span class="status-dot" id="env-dot"></span>
-          <span class="mono-small" id="env-text">ENV: PROBING</span>
-          <select id="device-select" title="Connected iPhone"></select>
-          <button class="icon-btn" id="refresh-btn" title="Refresh devices">↻</button>
+          <span class="mono-small" id="env-text">环境：探测中</span>
+          <select id="device-select" title="已连接的 iPhone"></select>
+          <button class="icon-btn" id="refresh-btn" title="刷新设备">↻</button>
         </section>
 
         <section class="glass-panel multi-device-card hidden" id="multi-device-card">
           <div class="small-icon">▤</div>
           <div>
-            <div class="mono-title" id="multi-device-title">Multiple devices</div>
-            <div class="muted-line">Select which device to teleport.</div>
+            <div class="mono-title" id="multi-device-title">检测到多台设备</div>
+            <div class="muted-line">请选择要修改定位的设备。</div>
           </div>
         </section>
       </div>
@@ -47,57 +47,57 @@
         <section class="glass-panel target-card">
           <div class="search-row">
             <span class="search-icon">⌕</span>
-            <input id="city-input" type="search" autocomplete="off" spellcheck="false" placeholder="Search city...">
-            <button class="icon-btn" id="clear-search-btn" title="Clear search">×</button>
-            <button class="icon-btn accent" id="search-btn" title="Search city">➜</button>
+            <input id="city-input" type="search" autocomplete="off" spellcheck="false" placeholder="搜索城市...">
+            <button class="icon-btn" id="clear-search-btn" title="清空搜索">×</button>
+            <button class="icon-btn accent" id="search-btn" title="搜索城市">➜</button>
           </div>
 
           <div class="coordinate-fields">
             <label class="tech-input" id="lat-field">
-              <span>LAT</span>
+              <span>纬度</span>
               <input type="text" id="lat-input" value="25.185317" inputmode="decimal">
             </label>
             <label class="tech-input" id="lon-field">
-              <span>LON</span>
+              <span>经度</span>
               <input type="text" id="lon-input" value="55.281516" inputmode="decimal">
             </label>
           </div>
         </section>
 
         <section class="glass-panel preset-card">
-          <button class="preset-btn orange" data-name="DUBAI" data-lat="25.185317" data-lon="55.281516"><span>🇦🇪</span><b>DUBAI</b></button>
-          <button class="preset-btn blue" data-name="Abu Dhabi" data-lat="24.340142" data-lon="54.518667"><span>🇦🇪</span><b>Abu Dhabi</b></button>
-          <button class="preset-btn purple" data-name="Hanoi" data-lat="20.992498" data-lon="105.944606"><span>🇻🇳</span><b>Hanoi</b></button>
-          <button class="preset-btn pink" data-name="Tokyo" data-lat="35.689500" data-lon="139.691700"><span>🇯🇵</span><b>Tokyo</b></button>
-          <button class="preset-btn cyan" data-name="New York" data-lat="40.712800" data-lon="-74.006000"><span>🇺🇸</span><b>New York</b></button>
-          <button class="preset-btn green" data-name="London" data-lat="51.507400" data-lon="-0.127800"><span>🇬🇧</span><b>London</b></button>
-          <button class="preset-btn indigo" data-name="Paris" data-lat="48.856600" data-lon="2.352200"><span>🇫🇷</span><b>Paris</b></button>
-          <button class="preset-btn red" data-name="Shenzhen" data-lat="22.543100" data-lon="114.057900"><span>🇨🇳</span><b>Shenzhen</b></button>
+          <button class="preset-btn orange" data-name="迪拜" data-lat="25.185317" data-lon="55.281516"><span>🇦🇪</span><b>迪拜</b></button>
+          <button class="preset-btn blue" data-name="阿布扎比" data-lat="24.340142" data-lon="54.518667"><span>🇦🇪</span><b>阿布扎比</b></button>
+          <button class="preset-btn purple" data-name="河内" data-lat="20.992498" data-lon="105.944606"><span>🇻🇳</span><b>河内</b></button>
+          <button class="preset-btn pink" data-name="东京" data-lat="35.689500" data-lon="139.691700"><span>🇯🇵</span><b>东京</b></button>
+          <button class="preset-btn cyan" data-name="纽约" data-lat="40.712800" data-lon="-74.006000"><span>🇺🇸</span><b>纽约</b></button>
+          <button class="preset-btn green" data-name="伦敦" data-lat="51.507400" data-lon="-0.127800"><span>🇬🇧</span><b>伦敦</b></button>
+          <button class="preset-btn indigo" data-name="巴黎" data-lat="48.856600" data-lon="2.352200"><span>🇫🇷</span><b>巴黎</b></button>
+          <button class="preset-btn red" data-name="深圳" data-lat="22.556336" data-lon="113.916641"><span>🇨🇳</span><b>深圳</b></button>
         </section>
       </div>
     </section>
 
     <section class="bottom-stack">
       <div class="action-row">
-        <button id="set-btn" class="jump-btn">>>> CONFIRM & JUMP <<<</button>
-        <button id="clear-btn" class="clear-btn">⌧ CLEAR</button>
+        <button id="set-btn" class="jump-btn">>>> 确认并跳转 <<<</button>
+        <button id="clear-btn" class="clear-btn">⌧ 清除</button>
       </div>
 
       <section class="status-card" id="status-card">
         <div class="status-icon" id="status-icon">✓</div>
         <div class="status-copy">
-          <div id="status-title">Ready to teleport</div>
-          <div id="status-subtitle">Drag the map, search a city, or tap a preset.</div>
+          <div id="status-title">已准备好修改定位</div>
+          <div id="status-subtitle">拖动地图、搜索城市，或点击预设地点。</div>
         </div>
-        <button class="log-toggle" id="log-toggle">Log ▴</button>
+        <button class="log-toggle" id="log-toggle">日志 ▴</button>
       </section>
 
       <section class="log-panel hidden" id="log-panel">
         <div class="log-header">
-          <span>DEBUG LOG</span>
+          <span>调试日志</span>
           <span id="log-count">0/400</span>
-          <button class="icon-btn accent" id="export-btn" title="Export diagnostics">⇧</button>
-          <button class="icon-btn" id="clear-log-btn" title="Clear log">⌫</button>
+          <button class="icon-btn accent" id="export-btn" title="导出诊断">⇧</button>
+          <button class="icon-btn" id="clear-log-btn" title="清空日志">⌫</button>
         </div>
         <pre id="log-content"></pre>
       </section>

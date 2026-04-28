@@ -77,7 +77,7 @@ function selectedDevice() {
 }
 
 function selectedDeviceLabel(device) {
-  if (!device) return "No USB iPhone detected.";
+  if (!device) return "未检测到 USB iPhone。";
   const version = device.operatingSystemVersion ? ` iOS ${device.operatingSystemVersion}` : "";
   return `${device.name || "iPhone"}${version}`;
 }
@@ -109,6 +109,29 @@ function setStatus(kind, title, subtitle = "") {
   render();
 }
 
+function localizeError(message) {
+  return String(message || "未知错误")
+    .replaceAll("native core returned error", "原生核心返回错误")
+    .replaceAll("native core returned null", "原生核心返回空结果")
+    .replaceAll("failed to connect to usbmuxd", "连接 usbmuxd 失败")
+    .replaceAll("failed to enumerate iOS devices", "枚举 iOS 设备失败")
+    .replaceAll("failed to connect to lockdown service", "连接 lockdown 服务失败")
+    .replaceAll("failed to serialize devices", "序列化设备列表失败")
+    .replaceAll("failed to serialize device info", "序列化设备信息失败")
+    .replaceAll("failed to serialize status", "序列化状态失败")
+    .replaceAll("failed to start location simulation service", "启动定位模拟服务失败")
+    .replaceAll("failed to set location", "设置定位失败")
+    .replaceAll("failed to clear location", "清除定位失败")
+    .replaceAll("invalid latitude", "纬度无效")
+    .replaceAll("invalid longitude", "经度无效")
+    .replaceAll("invalid coordinates", "坐标无效")
+    .replaceAll("set-location requires ios17-location-daemon", "设置定位需要 ios17-location-daemon")
+    .replaceAll("clear-location requires ios17-location-daemon", "清除定位需要 ios17-location-daemon")
+    .replaceAll("device with UDID", "设备 UDID")
+    .replaceAll("not found over USB", "未通过 USB 找到")
+    .replaceAll("detected", "已检测到");
+}
+
 function assertCoreOk(result) {
   let payload = null;
   try {
@@ -118,8 +141,18 @@ function assertCoreOk(result) {
   }
 
   if (payload?.status === "error") {
-    throw new Error(payload.error || "native core returned error");
+    throw new Error(localizeError(payload.error || "原生核心返回错误"));
   }
+}
+
+function coreResultText(result) {
+  try {
+    const payload = JSON.parse(result);
+    if (payload?.status === "ok") return "成功";
+    if (payload?.status === "error") return `失败：${localizeError(payload.error)}`;
+  } catch {
+  }
+  return result || "完成";
 }
 
 function clearTransientSuccess() {
@@ -134,25 +167,25 @@ function renderDeviceState() {
 
   elements.deviceIcon.classList.toggle("connected", hasDevice);
   elements.deviceIcon.textContent = hasDevice ? "▣" : "⌁";
-  elements.hardwareTitle.textContent = hasDevice ? "IPHONE CONNECTED" : "NO DEVICE";
+  elements.hardwareTitle.textContent = hasDevice ? "已连接 iPhone" : "未连接设备";
   elements.hardwareTitle.style.color = hasDevice ? "var(--green)" : "var(--red)";
   elements.hardwareSubtitle.textContent = hasDevice
     ? `${selectedDeviceLabel(device)} - ${device.identifier}`
-    : "Plug in via USB and trust this computer.";
+    : "请通过 USB 连接并信任这台电脑。";
 
   elements.envDot.className = "status-dot";
   if (!state.bridgeAvailable) {
-    elements.envText.textContent = "ENV: MISSING";
+    elements.envText.textContent = "环境：不可用";
   } else if (hasDevice) {
     elements.envDot.classList.add("ready");
-    elements.envText.textContent = "ENV: READY";
+    elements.envText.textContent = "环境：就绪";
   } else {
     elements.envDot.classList.add("warn");
-    elements.envText.textContent = "ENV: DEVICE PROBE";
+    elements.envText.textContent = "环境：设备探测";
   }
 
   elements.multiDeviceCard.classList.toggle("hidden", state.devices.length < 2);
-  elements.multiDeviceTitle.textContent = `${state.devices.length} iPhones connected`;
+  elements.multiDeviceTitle.textContent = `已连接 ${state.devices.length} 台 iPhone`;
 
   elements.deviceSelect.disabled = state.devices.length === 0;
 }
@@ -178,31 +211,31 @@ function statusDisplay() {
     return {
       kind: "error",
       icon: "!",
-      title: "Device backend unavailable",
-      subtitle: "WebView bridge is not available. Run the packaged Windows app.",
+      title: "设备后端不可用",
+      subtitle: "WebView 桥接未就绪。请运行打包后的 Windows 程序。",
     };
   }
   if (!state.selectedDeviceId) {
     return {
       kind: "error",
       icon: "⌁",
-      title: "Connect your iPhone",
-      subtitle: "Plug in via USB and trust this computer on the device.",
+      title: "请连接 iPhone",
+      subtitle: "通过 USB 接入设备，并在 iPhone 上信任这台电脑。",
     };
   }
   if (!coords.latValid || !coords.lonValid) {
     return {
       kind: "warning",
       icon: "!",
-      title: "Invalid coordinates",
-      subtitle: "Latitude must be -90...90, longitude must be -180...180.",
+      title: "坐标无效",
+      subtitle: "纬度范围必须是 -90 到 90，经度范围必须是 -180 到 180。",
     };
   }
   return {
     kind: "ready",
     icon: "✓",
-    title: "Ready to teleport",
-    subtitle: "Drag the map, search a city, or tap a preset.",
+    title: "已准备好修改定位",
+    subtitle: "拖动地图、搜索城市，或点击预设地点。",
   };
 }
 
@@ -220,23 +253,23 @@ function renderActions() {
   elements.clearButton.disabled = !canClearLocation();
 
   if (state.isWorking) {
-    elements.setButton.textContent = "EXECUTING...";
+    elements.setButton.textContent = "正在执行...";
   } else if (!state.bridgeAvailable) {
-    elements.setButton.textContent = "BACKEND UNAVAILABLE";
+    elements.setButton.textContent = "后端不可用";
   } else if (!state.selectedDeviceId) {
-    elements.setButton.textContent = "WAITING FOR USB...";
+    elements.setButton.textContent = "等待 USB 设备...";
   } else if (!coords.latValid || !coords.lonValid) {
-    elements.setButton.textContent = "INVALID COORDS";
+    elements.setButton.textContent = "坐标无效";
   } else {
-    elements.setButton.textContent = ">>> CONFIRM & JUMP <<<";
+    elements.setButton.textContent = ">>> 确认并跳转 <<<";
   }
 
-  elements.clearButton.textContent = state.isWorking ? "WORKING..." : "⌧ CLEAR";
+  elements.clearButton.textContent = state.isWorking ? "处理中..." : "⌧ 清除";
 }
 
 function renderLogPanel() {
   elements.logPanel.classList.toggle("hidden", !state.logOpen);
-  elements.logToggle.textContent = state.logOpen ? "Log ▾" : "Log ▴";
+  elements.logToggle.textContent = state.logOpen ? "日志 ▾" : "日志 ▴";
 }
 
 function render() {
@@ -261,7 +294,7 @@ function replaceDeviceOptions(devices) {
   if (devices.length === 0) {
     const option = document.createElement("option");
     option.value = "";
-    option.textContent = "No USB iPhone detected.";
+    option.textContent = "未检测到 USB iPhone。";
     elements.deviceSelect.appendChild(option);
     state.selectedDeviceId = "";
     return;
@@ -281,14 +314,14 @@ function replaceDeviceOptions(devices) {
 }
 
 async function refreshDevices() {
-  setStatus("working", "Refreshing session...", "Checking USB device state");
+  setStatus("working", "正在刷新会话...", "正在检查 USB 设备状态");
 
   const bridge = await getBridge();
   state.bridgeAvailable = Boolean(bridge);
   if (!bridge) {
     state.devices = [];
     replaceDeviceOptions([]);
-    log("[SYS] WebView bridge unavailable.");
+    log("[系统] WebView 桥接不可用。");
     setStatus("idle", "", "");
     return;
   }
@@ -300,20 +333,21 @@ async function refreshDevices() {
     replaceDeviceOptions(state.devices);
 
     if (state.devices.length === 0) {
-      log("[HARDWARE] No USB iPhone detected.");
+      log("[硬件] 未检测到 USB iPhone。");
     } else {
-      log(`[HARDWARE] ${state.devices.length} USB iPhone(s) detected.`);
+      log(`[硬件] 检测到 ${state.devices.length} 台 USB iPhone。`);
       const device = selectedDevice();
       if (device) {
-        log(`[DEVICE] Selected ${selectedDeviceLabel(device)} (${device.identifier})`);
+        log(`[设备] 已选择 ${selectedDeviceLabel(device)} (${device.identifier})`);
       }
     }
     setStatus("idle", "", "");
   } catch (error) {
     state.devices = [];
     replaceDeviceOptions([]);
-    log(`[SYS] Enumerate failed: ${error.message}`);
-    setStatus("error", "Device refresh failed", error.message);
+    const message = localizeError(error.message);
+    log(`[系统] 枚举设备失败：${message}`);
+    setStatus("error", "设备刷新失败", message);
   }
 }
 
@@ -327,13 +361,13 @@ async function loadDeviceInfo() {
   try {
     const json = await bridge.DeviceInfo(deviceId);
     const info = JSON.parse(json);
-    log("[DEVICE] Device info:");
-    log(`[DEVICE] Name: ${info.device_name || "(unknown)"}`);
-    log(`[DEVICE] iOS: ${info.product_version || "(unknown)"}`);
-    log(`[DEVICE] Type: ${info.product_type || "(unknown)"}`);
-    log(`[DEVICE] UDID: ${info.udid || deviceId}`);
+    log("[设备] 设备信息：");
+    log(`[设备] 名称：${info.device_name || "未知"}`);
+    log(`[设备] iOS：${info.product_version || "未知"}`);
+    log(`[设备] 型号：${info.product_type || "未知"}`);
+    log(`[设备] UDID：${info.udid || deviceId}`);
   } catch (error) {
-    log(`[DEVICE] Info failed: ${error.message}`);
+    log(`[设备] 获取信息失败：${localizeError(error.message)}`);
   }
 }
 
@@ -370,7 +404,7 @@ async function searchCity() {
   const query = elements.cityInput.value.trim();
   if (!query) return;
 
-  setStatus("working", "Searching city...", query);
+  setStatus("working", "正在搜索城市...", query);
   try {
     const url = new URL("https://nominatim.openstreetmap.org/search");
     url.searchParams.set("format", "jsonv2");
@@ -386,19 +420,19 @@ async function searchCity() {
 
     const results = await response.json();
     if (!results.length) {
-      log(`[SEARCH] No result for ${query}`);
-      setStatus("warning", "City not found", query);
+      log(`[搜索] 没有找到：${query}`);
+      setStatus("warning", "未找到城市", query);
       return;
     }
 
     const lat = Number.parseFloat(results[0].lat);
     const lon = Number.parseFloat(results[0].lon);
     setMapCenter(lat, lon, 14);
-    log(`[SEARCH] ${query} -> ${formatCoordinate(lat)}, ${formatCoordinate(lon)}`);
+    log(`[搜索] ${query} -> ${formatCoordinate(lat)}, ${formatCoordinate(lon)}`);
     setStatus("idle", "", "");
   } catch (error) {
-    log(`[SEARCH] Failed: ${error.message}`);
-    setStatus("error", "Search failed", "Check network access and try again.");
+    log(`[搜索] 失败：${localizeError(error.message)}`);
+    setStatus("error", "搜索失败", "请检查网络连接后重试。");
   }
 }
 
@@ -413,12 +447,12 @@ async function setLocation() {
   if (!bridge) return;
 
   state.isWorking = true;
-  setStatus("working", "Teleporting...", `${formatCoordinate(coords.lat)}, ${formatCoordinate(coords.lon)}`);
-  log("[USER] ACTION: EXECUTE JUMP CLICKED");
-  log("[KERNEL] TARGET LOCK ACQUIRED");
-  log(`[DATA] LATITUDE:  ${formatCoordinate(coords.lat)}`);
-  log(`[DATA] LONGITUDE: ${formatCoordinate(coords.lon)}`);
-  log("[KERNEL] INITIATING INJECTION SEQUENCE...");
+  setStatus("working", "正在修改定位...", `${formatCoordinate(coords.lat)}, ${formatCoordinate(coords.lon)}`);
+  log("[用户] 点击执行跳转");
+  log("[核心] 已锁定目标坐标");
+  log(`[数据] 纬度：${formatCoordinate(coords.lat)}`);
+  log(`[数据] 经度：${formatCoordinate(coords.lon)}`);
+  log("[核心] 正在启动注入流程...");
 
   try {
     const result = await bridge.SetLocation(
@@ -427,11 +461,12 @@ async function setLocation() {
       formatCoordinate(coords.lon),
     );
     assertCoreOk(result);
-    log(`[CORE] ${result}`);
-    setStatus("success", "GPS moved", `${formatCoordinate(coords.lat)}, ${formatCoordinate(coords.lon)}`);
+    log(`[核心] ${coreResultText(result)}`);
+    setStatus("success", "GPS 已移动", `${formatCoordinate(coords.lat)}, ${formatCoordinate(coords.lon)}`);
   } catch (error) {
-    log(`[CORE] Set failed: ${error.message}`);
-    setStatus("error", "Teleport failed", error.message);
+    const message = localizeError(error.message);
+    log(`[核心] 设置失败：${message}`);
+    setStatus("error", "修改定位失败", message);
   } finally {
     state.isWorking = false;
     render();
@@ -448,18 +483,19 @@ async function clearLocation() {
   if (!bridge) return;
 
   state.isWorking = true;
-  setStatus("working", "Clearing location...", "Requesting real GPS restore");
-  log("[USER] ACTION: CLEAR LOCATION CLICKED");
-  log("[KERNEL] RESTORING REAL DEVICE LOCATION...");
+  setStatus("working", "正在清除定位...", "正在请求恢复真实 GPS");
+  log("[用户] 点击清除定位");
+  log("[核心] 正在恢复设备真实定位...");
 
   try {
     const result = await bridge.ClearLocation(state.selectedDeviceId);
     assertCoreOk(result);
-    log(`[CORE] ${result}`);
-    setStatus("success", "GPS restored", "Real device location resumed");
+    log(`[核心] ${coreResultText(result)}`);
+    setStatus("success", "GPS 已恢复", "设备真实定位已恢复");
   } catch (error) {
-    log(`[CORE] Clear failed: ${error.message}`);
-    setStatus("error", "Clear failed", error.message);
+    const message = localizeError(error.message);
+    log(`[核心] 清除失败：${message}`);
+    setStatus("error", "清除失败", message);
   } finally {
     state.isWorking = false;
     render();
@@ -479,7 +515,7 @@ elements.cityInput.addEventListener("keydown", (event) => {
 elements.deviceSelect.addEventListener("change", () => {
   state.selectedDeviceId = elements.deviceSelect.value;
   const device = selectedDevice();
-  if (device) log(`[DEVICE] Selected ${selectedDeviceLabel(device)} (${device.identifier})`);
+  if (device) log(`[设备] 已选择 ${selectedDeviceLabel(device)} (${device.identifier})`);
   render();
   loadDeviceInfo();
 });
@@ -512,7 +548,7 @@ document.querySelectorAll(".preset-btn").forEach((button) => {
     const lat = Number.parseFloat(button.dataset.lat);
     const lon = Number.parseFloat(button.dataset.lon);
     setMapCenter(lat, lon, 15);
-    log(`[USER] Selected Preset: ${button.dataset.name}`);
+    log(`[用户] 已选择预设：${button.dataset.name}`);
   });
 });
 
@@ -523,8 +559,8 @@ map.on("moveend", () => {
 });
 
 window.addEventListener("DOMContentLoaded", () => {
-  log("[SYS] Initializing GeoTeleport Windows...");
-  log(`[SYS] User agent: ${navigator.userAgent}`);
+  log("[系统] 正在初始化 GeoTeleport Windows版...");
+  log(`[系统] 浏览器内核：${navigator.userAgent}`);
   render();
   window.setTimeout(refreshDevices, 300);
 });

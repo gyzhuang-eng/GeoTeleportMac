@@ -387,7 +387,7 @@ struct ContentView: View {
                             LocationButton(flag: "🇺🇸", name: "New York",   lat: "40.7128",   lon: "-74.0060",   color: .cyan)
                             LocationButton(flag: "🇬🇧", name: "London",     lat: "51.5074",   lon: "-0.1278",    color: .green)
                             LocationButton(flag: "🇫🇷", name: "Paris",      lat: "48.8566",   lon: "2.3522",     color: .indigo)
-                            LocationButton(flag: "🇨🇳", name: "Shenzhen",   lat: "22.5431",   lon: "114.0579",   color: .red)
+                            LocationButton(flag: "🇨🇳", name: "Shenzhen",   lat: "22.556336", lon: "113.916641", color: .red)
                         }
                         .padding(14)
                         .background(glassPanel(cornerRadius: 16).shadow(color: .black.opacity(0.3), radius: 10, y: 4))

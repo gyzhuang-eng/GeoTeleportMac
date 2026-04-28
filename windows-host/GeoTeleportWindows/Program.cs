@@ -48,7 +48,7 @@ internal sealed class MainForm : Form
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"Failed to initialize WebView2. Ensure WebView2 Runtime is installed.\n\n{ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show($"初始化 WebView2 失败。请确认已安装 WebView2 Runtime。\n\n{ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
 }
@@ -68,11 +68,11 @@ public class AppBridge
         }
         catch (DllNotFoundException)
         {
-            throw new Exception("Native core DLL missing. Cannot load geoteleport_device_core.dll.");
+            throw new Exception("缺少原生核心 DLL，无法加载 geoteleport_device_core.dll。");
         }
         catch (Exception ex)
         {
-            throw new Exception($"Enumerate failed: {ex.Message}");
+            throw new Exception($"枚举设备失败：{ex.Message}");
         }
     }
 
@@ -84,7 +84,7 @@ public class AppBridge
         }
         catch (Exception ex)
         {
-            throw new Exception($"Device info failed: {ex.Message}");
+            throw new Exception($"获取设备信息失败：{ex.Message}");
         }
     }
 
@@ -102,7 +102,7 @@ public class AppBridge
         }
         catch (Exception ex)
         {
-            throw new Exception($"Set location failed: {ex.Message}");
+            throw new Exception($"设置定位失败：{ex.Message}");
         }
     }
 
@@ -120,7 +120,7 @@ public class AppBridge
         }
         catch (Exception ex)
         {
-            throw new Exception($"Clear location failed: {ex.Message}");
+            throw new Exception($"清除定位失败：{ex.Message}");
         }
     }
 
@@ -130,17 +130,17 @@ public class AppBridge
         {
             using var dialog = new SaveFileDialog
             {
-                Filter = "Text files (*.txt)|*.txt|All files (*.*)|*.*",
-                FileName = $"GeoTeleport_Windows_Diagnostics_{DateTime.Now:yyyyMMdd_HHmmss}.txt"
+                Filter = "文本文件 (*.txt)|*.txt|所有文件 (*.*)|*.*",
+                FileName = $"GeoTeleport_Windows_诊断_{DateTime.Now:yyyyMMdd_HHmmss}.txt"
             };
             if (dialog.ShowDialog(_form) != DialogResult.OK) return;
 
             var builder = new StringBuilder();
-            builder.AppendLine("GeoTeleport Windows Diagnostics");
-            builder.AppendLine($"Timestamp: {DateTimeOffset.Now}");
-            builder.AppendLine($"OS: {Environment.OSVersion}");
+            builder.AppendLine("GeoTeleport Windows版诊断");
+            builder.AppendLine($"时间：{DateTimeOffset.Now}");
+            builder.AppendLine($"操作系统：{Environment.OSVersion}");
             builder.AppendLine($".NET: {Environment.Version}");
-            builder.AppendLine($"Selected device: {(string.IsNullOrWhiteSpace(udid) ? "(none)" : udid)}");
+            builder.AppendLine($"已选设备：{(string.IsNullOrWhiteSpace(udid) ? "无" : udid)}");
             builder.AppendLine();
             builder.AppendLine(logs);
             File.WriteAllText(dialog.FileName, builder.ToString());
@@ -155,7 +155,7 @@ internal static class Ios17DaemonClient
         var exePath = Path.Combine(AppContext.BaseDirectory, "geoteleport-device-core.exe");
         if (!File.Exists(exePath))
         {
-            return Error($"iOS 17+ location requires geoteleport-device-core.exe beside the Windows host: {exePath}");
+            return Error($"iOS 17+ 定位需要 geoteleport-device-core.exe 位于 Windows 主程序旁边：{exePath}");
         }
 
         using var process = new System.Diagnostics.Process();
@@ -173,7 +173,7 @@ internal static class Ios17DaemonClient
 
         if (!process.Start())
         {
-            return Error("failed to start ios17-location-daemon");
+            return Error("启动 ios17-location-daemon 失败");
         }
 
         try
@@ -181,7 +181,7 @@ internal static class Ios17DaemonClient
             var ready = ReadLineWithTimeout(process.StandardOutput, TimeSpan.FromSeconds(20));
             if (!string.Equals(ready, "READY", StringComparison.Ordinal))
             {
-                return Error($"ios17-location-daemon did not become ready: {ready ?? "(no output)"} {ReadAvailableError(process)}");
+                return Error($"ios17-location-daemon 未进入就绪状态：{ready ?? "无输出"} {ReadAvailableError(process)}");
             }
 
             process.StandardInput.WriteLine(command);
@@ -189,7 +189,7 @@ internal static class Ios17DaemonClient
 
             var response = ReadLineWithTimeout(process.StandardOutput, TimeSpan.FromSeconds(30));
             return string.IsNullOrWhiteSpace(response)
-                ? Error($"ios17-location-daemon returned no response. {ReadAvailableError(process)}")
+                ? Error($"ios17-location-daemon 没有返回响应。{ReadAvailableError(process)}")
                 : response;
         }
         finally
@@ -259,7 +259,7 @@ internal static class NativeCore
 
     private static string TakeString(nint ptr)
     {
-        if (ptr == 0) throw new InvalidOperationException("native core returned null");
+        if (ptr == 0) throw new InvalidOperationException("原生核心返回空结果");
         try
         {
             return Marshal.PtrToStringUTF8(ptr) ?? "";

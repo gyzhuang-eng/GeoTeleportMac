@@ -58,9 +58,9 @@ Create a local unsigned DMG from a Release build:
 ./build_dmg.sh
 ```
 
-## Windows Core Build
+## Windows 核心构建
 
-On Windows, install the local build dependencies first:
+在 Windows 上先安装本地构建依赖：
 
 ```powershell
 winget install -e --id Rustlang.Rustup
@@ -68,34 +68,31 @@ winget install -e --id NASM.NASM
 winget install -e --id Microsoft.DotNet.SDK.8
 ```
 
-Close and reopen PowerShell after installing Rust so `cargo` is available in
-`PATH`. Then build the shared Rust core artifacts with:
+安装 Rust 后关闭并重新打开 PowerShell，确保 `cargo` 已进入 `PATH`。然后构建共享 Rust 核心产物：
 
 ```powershell
 ./scripts/build_windows_core.ps1 -Release
 ```
 
-If the Rust build later reports a missing `link.exe` or MSVC toolchain, install
-C++ Build Tools:
+如果 Rust 构建后续提示缺少 `link.exe` 或 MSVC 工具链，请安装 C++ Build Tools：
 
 ```powershell
 winget install -e --id Microsoft.VisualStudio.2022.BuildTools --override "--passive --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
 ```
 
-Publish the thin Windows host app with the native core artifacts copied beside it:
+发布轻量 Windows 主程序，并把原生核心产物复制到同一目录：
 
 ```powershell
 ./scripts/publish_windows_host.ps1
 ```
 
-The Windows package is written to a short, repo-root path:
+Windows 包会输出到仓库根目录下这个简短路径：
 
 ```text
 dist/windows/GeoTeleportWindows-win-x64/
 ```
 
-That folder contains `GeoTeleportWindows.exe`, `geoteleport_device_core.dll`,
-and `geoteleport-device-core.exe` for the iOS 17+ daemon path.
+该目录包含 `GeoTeleportWindows.exe`、`geoteleport_device_core.dll`，以及 iOS 17+ daemon 路径需要的 `geoteleport-device-core.exe`。
 
 ## Unsigned First Run
 
