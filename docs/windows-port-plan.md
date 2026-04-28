@@ -35,6 +35,8 @@ the existing C ABI.
   ```
 
 - CI entry point: `.github/workflows/native-device-core-windows.yml`.
+- Windows CI installs `nasm` because the Rust TLS/native crypto dependency can
+  require assembler support while compiling `aws-lc-sys`.
 - Expected artifact names:
   - `geoteleport-device-core.exe`
   - `geoteleport_device_core.dll`

@@ -1,6 +1,7 @@
 name: windows-host
 
 on:
+  workflow_dispatch:
   pull_request:
     paths:
       - "native-device-core/**"
@@ -25,10 +26,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Show runner tools
+        shell: pwsh
+        run: |
+          dotnet --info
+          rustc --version
+          cargo --version
+          rustup --version
+
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
+
+      - name: Install native build tools
+        shell: pwsh
+        run: choco install nasm -y --no-progress
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
