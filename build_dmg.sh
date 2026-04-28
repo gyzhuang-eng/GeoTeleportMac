@@ -4,6 +4,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DERIVED_DATA_PATH="${DERIVED_DATA_PATH:-$ROOT_DIR/build/DerivedData}"
+DIST_DIR="${DIST_DIR:-$ROOT_DIR/dist/macos}"
 XCODE_SWIFT_OPTIMIZATION_LEVEL="${XCODE_SWIFT_OPTIMIZATION_LEVEL:-}"
 XCODE_SWIFT_COMPILATION_MODE="${XCODE_SWIFT_COMPILATION_MODE:-}"
 XCODE_ENABLE_PREVIEWS="${XCODE_ENABLE_PREVIEWS:-}"
@@ -50,20 +51,27 @@ fi
 echo "=> Found App: $APP_PATH"
 
 echo "=> Preparing DMG staging directory..."
-DMG_STAGING="build/dmg_staging"
+DMG_STAGING="$ROOT_DIR/build/dmg_staging_macos"
 rm -rf "$DMG_STAGING"
 mkdir -p "$DMG_STAGING"
+rm -rf "$DIST_DIR"
+mkdir -p "$DIST_DIR"
 
 # Copy the app to the staging directory
 cp -R "$APP_PATH" "$DMG_STAGING/"
+cp -R "$APP_PATH" "$DIST_DIR/"
 
 # Add a shortcut to the Applications folder
 ln -s /Applications "$DMG_STAGING/Applications"
 
-echo "=> Creating GeoTeleportMacV3.dmg..."
-DMG_NAME="GeoTeleportMacV3.dmg"
-rm -f "$DMG_NAME"
-hdiutil create -volname "GeoTeleportMacV3" -srcfolder "$DMG_STAGING" -ov -format UDZO "$DMG_NAME" > /dev/null
+echo "=> Creating dist/macos/GeoTeleportMacV3.dmg..."
+DMG_PATH="$DIST_DIR/GeoTeleportMacV3.dmg"
+rm -f "$DMG_PATH"
+hdiutil create -volname "GeoTeleportMacV3" -srcfolder "$DMG_STAGING" -ov -format UDZO "$DMG_PATH" > /dev/null
+rm -rf "$DMG_STAGING"
+rm -rf "$APP_PATH"
+rm -rf "$DERIVED_DATA_PATH/Build/Products/Release/GeoTeleportMacV3.app.dSYM"
 
-echo "=> Done! $DMG_NAME has been created in the project root."
+echo "=> Done! macOS release artifacts are in:"
+echo "   $DIST_DIR"
 echo "   This is an unsigned distribution build. Users must open it through System Settings -> Privacy & Security on first launch."
