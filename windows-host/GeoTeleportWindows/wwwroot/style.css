@@ -1,0 +1,241 @@
+* {
+  box-sizing: border-box;
+  font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, Helvetica, Arial, sans-serif;
+  margin: 0;
+  padding: 0;
+}
+
+body, html {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #000;
+  color: #fff;
+}
+
+#map {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 1;
+}
+
+/* Make Leaflet tiles dark by default */
+.leaflet-layer,
+.leaflet-control-zoom-in,
+.leaflet-control-zoom-out,
+.leaflet-control-attribution {
+  filter: invert(100%) hue-rotate(180deg) brightness(95%) contrast(90%);
+}
+
+.glass-panel {
+  position: absolute;
+  z-index: 1000;
+  background: rgba(25, 25, 25, 0.7);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.top-left {
+  top: 20px;
+  left: 20px;
+  width: 320px;
+}
+
+.top-right {
+  top: 20px;
+  right: 20px;
+  width: 320px;
+}
+
+.bottom-center {
+  bottom: 30px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 400px;
+  align-items: center;
+  padding: 20px;
+}
+
+.bottom-left {
+  bottom: 20px;
+  left: 20px;
+  width: 320px;
+  height: 200px;
+  display: flex;
+}
+
+.panel-header {
+  font-size: 14px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.9);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+}
+
+.field-row, .actions-row {
+  display: flex;
+  gap: 8px;
+}
+
+select, input {
+  flex: 1;
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #fff;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+select:focus, input:focus {
+  border-color: #007aff;
+}
+
+button {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #fff;
+  padding: 8px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  transition: all 0.2s;
+}
+
+button:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+button:active {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+button.primary-btn {
+  background: #007aff;
+  border-color: #007aff;
+  padding: 12px 32px;
+  font-size: 16px;
+}
+
+button.primary-btn:hover {
+  background: #006ce6;
+}
+
+button.danger-btn {
+  background: rgba(255, 59, 48, 0.2);
+  border-color: rgba(255, 59, 48, 0.4);
+  color: #ff453a;
+}
+
+button.danger-btn:hover {
+  background: rgba(255, 59, 48, 0.3);
+}
+
+.main-actions {
+  display: flex;
+  gap: 12px;
+  width: 100%;
+}
+
+.main-actions button {
+  flex: 1;
+}
+
+.status-bar {
+  margin-top: 8px;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.7);
+  text-align: center;
+}
+
+.coordinate-fields {
+  display: flex;
+  gap: 12px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+}
+
+.field label {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.presets {
+  margin-top: 8px;
+}
+
+.preset-title {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.6);
+  margin-bottom: 8px;
+}
+
+.preset-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.preset-btn {
+  font-size: 13px;
+  padding: 6px;
+}
+
+.log-header {
+  font-size: 13px;
+  font-weight: 600;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  padding-bottom: 8px;
+  margin-bottom: 8px;
+}
+
+.tiny-btn {
+  padding: 2px 8px;
+  font-size: 11px;
+}
+
+.log-content {
+  flex: 1;
+  overflow-y: auto;
+  font-family: monospace;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.8);
+  white-space: pre-wrap;
+  line-height: 1.4;
+}
+
+/* Scrollbar styling for log */
+.log-content::-webkit-scrollbar {
+  width: 6px;
+}
+
+.log-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.log-content::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 3px;
+}

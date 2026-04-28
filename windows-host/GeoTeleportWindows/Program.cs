@@ -2,6 +2,8 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.Web.WebView2.Core;
+using Microsoft.Web.WebView2.WinForms;
 
 namespace GeoTeleportWindows;
 
@@ -17,257 +19,130 @@ internal static class Program
 
 internal sealed class MainForm : Form
 {
-    private readonly ComboBox deviceCombo = new() { DropDownStyle = ComboBoxStyle.DropDownList };
-    private readonly Button refreshButton = new() { Text = "Refresh" };
-    private readonly Button infoButton = new() { Text = "Device Info" };
-    private readonly Button setButton = new() { Text = "Set" };
-    private readonly Button clearButton = new() { Text = "Clear" };
-    private readonly Button exportButton = new() { Text = "Export Diagnostics" };
-    private readonly TextBox latBox = new() { Text = "37.334900" };
-    private readonly TextBox lonBox = new() { Text = "-122.009020" };
-    private readonly TextBox logBox = new()
-    {
-        Multiline = true,
-        ReadOnly = true,
-        ScrollBars = ScrollBars.Vertical,
-        Font = new Font(FontFamily.GenericMonospace, 9.0f)
-    };
-    private readonly Label statusLabel = new()
-    {
-        AutoSize = false,
-        Text = "Ready",
-        TextAlign = ContentAlignment.MiddleLeft
-    };
+    private readonly WebView2 webView = new() { Dock = DockStyle.Fill };
 
     public MainForm()
     {
         Text = "GeoTeleport Windows";
         MinimumSize = new Size(860, 560);
         StartPosition = FormStartPosition.CenterScreen;
-
-        var root = new TableLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            Padding = new Padding(12),
-            ColumnCount = 1,
-            RowCount = 4
-        };
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
-        root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
-
-        var deviceRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 5 };
-        deviceRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        deviceRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 110));
-        deviceRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 110));
-        deviceRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 140));
-        deviceRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 150));
-        deviceRow.Controls.Add(deviceCombo, 0, 0);
-        deviceRow.Controls.Add(refreshButton, 1, 0);
-        deviceRow.Controls.Add(infoButton, 2, 0);
-        deviceRow.Controls.Add(clearButton, 3, 0);
-        deviceRow.Controls.Add(exportButton, 4, 0);
-
-        var locationRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 5 };
-        locationRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 90));
-        locationRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-        locationRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 90));
-        locationRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-        locationRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 110));
-        locationRow.Controls.Add(new Label { Text = "Latitude", TextAlign = ContentAlignment.MiddleLeft, Dock = DockStyle.Fill }, 0, 0);
-        locationRow.Controls.Add(latBox, 1, 0);
-        locationRow.Controls.Add(new Label { Text = "Longitude", TextAlign = ContentAlignment.MiddleLeft, Dock = DockStyle.Fill }, 2, 0);
-        locationRow.Controls.Add(lonBox, 3, 0);
-        locationRow.Controls.Add(setButton, 4, 0);
-
-        root.Controls.Add(deviceRow, 0, 0);
-        root.Controls.Add(locationRow, 0, 1);
-        root.Controls.Add(logBox, 0, 2);
-        root.Controls.Add(statusLabel, 0, 3);
-        Controls.Add(root);
-
-        refreshButton.Click += async (_, _) => await RefreshDevicesAsync();
-        infoButton.Click += async (_, _) => await LoadDeviceInfoAsync();
-        setButton.Click += async (_, _) => await SetLocationAsync();
-        clearButton.Click += async (_, _) => await ClearLocationAsync();
-        exportButton.Click += (_, _) => ExportDiagnostics();
-
-        Shown += async (_, _) => await RefreshDevicesAsync();
+        Controls.Add(webView);
+        
+        _ = InitializeAsync();
     }
 
-    private DeviceEntry? SelectedDevice => deviceCombo.SelectedItem as DeviceEntry;
-
-    private async Task RefreshDevicesAsync()
+    private async Task InitializeAsync()
     {
-        await RunCoreCallAsync("enumerate", () =>
-        {
-            var json = NativeCore.EnumerateDevices();
-            var devices = JsonSerializer.Deserialize<List<DeviceEntry>>(json, JsonOptions.Default) ?? [];
-            OnUi(() =>
-            {
-                deviceCombo.Items.Clear();
-                foreach (var device in devices)
-                {
-                    deviceCombo.Items.Add(device);
-                }
-                if (deviceCombo.Items.Count > 0)
-                {
-                    deviceCombo.SelectedIndex = 0;
-                }
-                Log(devices.Count == 0 ? "No USB iPhone detected." : $"Detected {devices.Count} USB device(s).");
-            });
-        });
-    }
-
-    private async Task LoadDeviceInfoAsync()
-    {
-        if (!RequireDevice(out var device)) return;
-        await RunCoreCallAsync("device-info", () =>
-        {
-            var json = NativeCore.DeviceInfo(device.Identifier);
-            var info = JsonSerializer.Deserialize<DeviceInfo>(json, JsonOptions.Default);
-            OnUi(() =>
-            {
-                Log("Device info:");
-                Log($"  Name: {info?.DeviceName ?? "(unknown)"}");
-                Log($"  iOS: {info?.ProductVersion ?? "(unknown)"}");
-                Log($"  Type: {info?.ProductType ?? "(unknown)"}");
-                Log($"  UDID: {info?.Udid ?? device.Identifier}");
-            });
-        });
-    }
-
-    private async Task SetLocationAsync()
-    {
-        if (!RequireDevice(out var device)) return;
-        if (!double.TryParse(latBox.Text, out _) || !double.TryParse(lonBox.Text, out _))
-        {
-            Log("Invalid coordinates.");
-            return;
-        }
-        await RunCoreCallAsync("set-location", () =>
-        {
-            var json = NativeCore.SetLocation(device.Identifier, latBox.Text.Trim(), lonBox.Text.Trim());
-            var status = JsonSerializer.Deserialize<StatusResponse>(json, JsonOptions.Default);
-            if (RequiresIos17Daemon(status))
-            {
-                json = Ios17DaemonClient.Send(device.Identifier, $"set {latBox.Text.Trim()} {lonBox.Text.Trim()}");
-                status = JsonSerializer.Deserialize<StatusResponse>(json, JsonOptions.Default);
-            }
-            OnUi(() => Log(status?.Status == "ok" ? "Location set." : $"Set failed: {status?.Error ?? json}"));
-        });
-    }
-
-    private async Task ClearLocationAsync()
-    {
-        if (!RequireDevice(out var device)) return;
-        await RunCoreCallAsync("clear-location", () =>
-        {
-            var json = NativeCore.ClearLocation(device.Identifier);
-            var status = JsonSerializer.Deserialize<StatusResponse>(json, JsonOptions.Default);
-            if (RequiresIos17Daemon(status))
-            {
-                json = Ios17DaemonClient.Send(device.Identifier, "clear");
-                status = JsonSerializer.Deserialize<StatusResponse>(json, JsonOptions.Default);
-            }
-            OnUi(() => Log(status?.Status == "ok" ? "Location cleared." : $"Clear failed: {status?.Error ?? json}"));
-        });
-    }
-
-    private async Task RunCoreCallAsync(string name, Action action)
-    {
-        SetBusy(true, $"{name} running...");
         try
         {
-            await Task.Run(action);
-            SetBusy(false, $"{name} complete");
-        }
-        catch (DllNotFoundException ex)
-        {
-            SetBusy(false, "Native core DLL missing");
-            Log($"Cannot load geoteleport_device_core.dll. Place it next to GeoTeleportWindows.exe. {ex.Message}");
+            await webView.EnsureCoreWebView2Async(null);
+            webView.CoreWebView2.SetVirtualHostNameToFolderMapping(
+                "app.local", 
+                Path.Combine(AppContext.BaseDirectory, "wwwroot"), 
+                CoreWebView2HostResourceAccessKind.Allow);
+            
+            webView.CoreWebView2.AddHostObjectToScript("bridge", new AppBridge(this));
+            webView.CoreWebView2.Navigate("http://app.local/index.html");
         }
         catch (Exception ex)
         {
-            SetBusy(false, $"{name} failed");
-            Log($"{name} failed: {ex.Message}");
+            MessageBox.Show($"Failed to initialize WebView2. Ensure WebView2 Runtime is installed.\n\n{ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+}
+
+[ComVisible(true)]
+[ClassInterface(ClassInterfaceType.AutoDual)]
+public class AppBridge
+{
+    private readonly MainForm _form;
+    public AppBridge(MainForm form) { _form = form; }
+
+    public string EnumerateDevices()
+    {
+        try
+        {
+            return NativeCore.EnumerateDevices();
+        }
+        catch (DllNotFoundException)
+        {
+            throw new Exception("Native core DLL missing. Cannot load geoteleport_device_core.dll.");
+        }
+        catch (Exception ex)
+        {
+            throw new Exception($"Enumerate failed: {ex.Message}");
         }
     }
 
-    private bool RequireDevice(out DeviceEntry device)
+    public string DeviceInfo(string udid)
     {
-        if (SelectedDevice is { } selected)
+        try
         {
-            device = selected;
-            return true;
+            return NativeCore.DeviceInfo(udid);
         }
-        Log("Select a USB device first.");
-        device = default!;
-        return false;
-    }
-
-    private static bool RequiresIos17Daemon(StatusResponse? status)
-    {
-        return status?.Error?.Contains("ios17-location-daemon", StringComparison.OrdinalIgnoreCase) == true;
-    }
-
-    private void ExportDiagnostics()
-    {
-        using var dialog = new SaveFileDialog
+        catch (Exception ex)
         {
-            Filter = "Text files (*.txt)|*.txt|All files (*.*)|*.*",
-            FileName = $"GeoTeleport_Windows_Diagnostics_{DateTime.Now:yyyyMMdd_HHmmss}.txt"
-        };
-        if (dialog.ShowDialog(this) != DialogResult.OK) return;
-
-        var builder = new StringBuilder();
-        builder.AppendLine("GeoTeleport Windows Diagnostics");
-        builder.AppendLine($"Timestamp: {DateTimeOffset.Now}");
-        builder.AppendLine($"OS: {Environment.OSVersion}");
-        builder.AppendLine($".NET: {Environment.Version}");
-        builder.AppendLine($"Selected device: {SelectedDevice?.Identifier ?? "(none)"}");
-        builder.AppendLine();
-        builder.AppendLine(logBox.Text);
-        File.WriteAllText(dialog.FileName, builder.ToString());
-        Log($"Diagnostics exported: {dialog.FileName}");
+            throw new Exception($"Device info failed: {ex.Message}");
+        }
     }
 
-    private void SetBusy(bool busy, string status)
+    public string SetLocation(string udid, string lat, string lon)
     {
-        OnUi(() =>
+        try
         {
-            refreshButton.Enabled = !busy;
-            infoButton.Enabled = !busy;
-            setButton.Enabled = !busy;
-            clearButton.Enabled = !busy;
-            exportButton.Enabled = !busy;
-            statusLabel.Text = status;
+            var json = NativeCore.SetLocation(udid, lat, lon);
+            var status = JsonSerializer.Deserialize<StatusResponse>(json, JsonOptions.Default);
+            if (status?.Error?.Contains("ios17-location-daemon", StringComparison.OrdinalIgnoreCase) == true)
+            {
+                json = Ios17DaemonClient.Send(udid, $"set {lat} {lon}");
+            }
+            return json;
+        }
+        catch (Exception ex)
+        {
+            throw new Exception($"Set location failed: {ex.Message}");
+        }
+    }
+
+    public string ClearLocation(string udid)
+    {
+        try
+        {
+            var json = NativeCore.ClearLocation(udid);
+            var status = JsonSerializer.Deserialize<StatusResponse>(json, JsonOptions.Default);
+            if (status?.Error?.Contains("ios17-location-daemon", StringComparison.OrdinalIgnoreCase) == true)
+            {
+                json = Ios17DaemonClient.Send(udid, "clear");
+            }
+            return json;
+        }
+        catch (Exception ex)
+        {
+            throw new Exception($"Clear location failed: {ex.Message}");
+        }
+    }
+
+    public void ExportDiagnostics(string udid, string logs)
+    {
+        _form.Invoke(() =>
+        {
+            using var dialog = new SaveFileDialog
+            {
+                Filter = "Text files (*.txt)|*.txt|All files (*.*)|*.*",
+                FileName = $"GeoTeleport_Windows_Diagnostics_{DateTime.Now:yyyyMMdd_HHmmss}.txt"
+            };
+            if (dialog.ShowDialog(_form) != DialogResult.OK) return;
+
+            var builder = new StringBuilder();
+            builder.AppendLine("GeoTeleport Windows Diagnostics");
+            builder.AppendLine($"Timestamp: {DateTimeOffset.Now}");
+            builder.AppendLine($"OS: {Environment.OSVersion}");
+            builder.AppendLine($".NET: {Environment.Version}");
+            builder.AppendLine($"Selected device: {(string.IsNullOrWhiteSpace(udid) ? "(none)" : udid)}");
+            builder.AppendLine();
+            builder.AppendLine(logs);
+            File.WriteAllText(dialog.FileName, builder.ToString());
         });
-    }
-
-    private void OnUi(Action action)
-    {
-        if (IsDisposed) return;
-        if (InvokeRequired)
-        {
-            BeginInvoke((MethodInvoker)(() => action()));
-            return;
-        }
-        action();
-    }
-
-    private void Log(string message)
-    {
-        var line = $"[{DateTime.Now:HH:mm:ss}] {message}{Environment.NewLine}";
-        if (InvokeRequired)
-        {
-            BeginInvoke((MethodInvoker)(() => logBox.AppendText(line)));
-        }
-        else
-        {
-            logBox.AppendText(line);
-        }
     }
 }
 

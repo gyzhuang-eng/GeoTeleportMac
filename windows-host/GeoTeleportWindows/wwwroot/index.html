@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>GeoTeleport Windows</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="map"></div>
+
+  <!-- Top-left: Device panel -->
+  <div class="glass-panel top-left" id="device-panel">
+    <div class="panel-header">Device Connection</div>
+    <div class="field-row">
+      <select id="device-select">
+        <option value="">No device detected...</option>
+      </select>
+      <button id="refresh-btn">⟳</button>
+    </div>
+    <div class="actions-row">
+      <button id="info-btn" class="secondary">Device Info</button>
+      <button id="export-btn" class="secondary">Export Logs</button>
+    </div>
+  </div>
+
+  <!-- Top-right: Location controls -->
+  <div class="glass-panel top-right" id="location-panel">
+    <div class="panel-header">Target Location</div>
+    <div class="coordinate-fields">
+      <div class="field">
+        <label>Latitude</label>
+        <input type="text" id="lat-input" value="37.334900" />
+      </div>
+      <div class="field">
+        <label>Longitude</label>
+        <input type="text" id="lon-input" value="-122.009020" />
+      </div>
+    </div>
+    <div class="presets">
+      <div class="preset-title">Presets</div>
+      <div class="preset-grid">
+        <button class="preset-btn" data-lat="37.334900" data-lon="-122.009020">Cupertino</button>
+        <button class="preset-btn" data-lat="40.7128" data-lon="-74.0060">New York</button>
+        <button class="preset-btn" data-lat="51.5074" data-lon="-0.1278">London</button>
+        <button class="preset-btn" data-lat="35.6895" data-lon="139.6917">Tokyo</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bottom-center: Main actions & Status -->
+  <div class="glass-panel bottom-center" id="action-panel">
+    <div class="main-actions">
+      <button id="set-btn" class="primary-btn">Teleport</button>
+      <button id="clear-btn" class="danger-btn">Clear Location</button>
+    </div>
+    <div class="status-bar" id="status-text">Ready</div>
+  </div>
+
+  <!-- Bottom-left: Log console (optional, hidden by default but can slide up) -->
+  <div class="glass-panel bottom-left" id="log-panel">
+    <div class="log-header">
+      Log Output
+      <button id="clear-log-btn" class="tiny-btn">Clear</button>
+    </div>
+    <div class="log-content" id="log-content"></div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
