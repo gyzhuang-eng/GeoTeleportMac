@@ -1125,23 +1125,23 @@ struct ContentView: View {
         setStatus(.working("Looking up \"\(query)\"…", nil))
         log("------------------------------------------")
         log("[GEO] Processing User Query: '\(query)'")
-        log("[GEO] Querying MapKit Geocoder...")
+        log("[GEO] Querying geocoder...")
         Task {
             do {
-                let request = MKGeocodingRequest(addressString: query)
-                guard let items = try await request?.mapItems, let item = items.first else {
+                let placemarks = try await CLGeocoder().geocodeAddressString(query)
+                guard let placemark = placemarks.first, let location = placemark.location else {
                     self.log("[GEO] ❌ No results")
                     self.setStatus(.failure("Couldn't find \"\(query)\"", "Check spelling or try a nearby landmark."))
                     return
                 }
-                let coord = item.location.coordinate
+                let coord = location.coordinate
                 await MainActor.run {
                     self.region.center = coord
                     self.region.span = MKCoordinateSpan(latitudeDelta: 0.008, longitudeDelta: 0.008)
                     self.latitude = String(format: "%.6f", coord.latitude)
                     self.longitude = String(format: "%.6f", coord.longitude)
                 }
-                let name = item.name ?? query
+                let name = placemark.name ?? placemark.locality ?? query
                 self.log("[GEO] ✅ Result: \(name)")
                 self.log("[GEO] Coords: \(String(format: "%.6f", coord.latitude)), \(String(format: "%.6f", coord.longitude))")
                 self.setStatus(.idle)

@@ -606,7 +606,8 @@ without trawling git history.
   and are not probed on the consumer path. Removed the remaining Xcode metadata
   fallback from device enrichment. Added `build_dmg.sh` and a `macos-dmg`
   GitHub Actions workflow so the unsigned macOS DMG can be downloaded from
-  branch builds.
+  branch builds. Lowered the macOS deployment target to 14.0 so CI can build
+  on standard GitHub macOS runners instead of requiring the local Xcode 26 SDK.
 
 - **2026-04-28 — Phase C/D validation complete (macOS).** Successfully completed clean-Mac validation. Generated `GeoTeleportMacV3.dmg` and tested on a pristine macOS machine with no developer toolchain (no Xcode, Python, Homebrew, or pymobiledevice3). Successfully performed hardware tests for both iOS 17+ and iOS 16- devices, confirming USB enumeration, device info fetching, and location setting/clearing. The macOS product is now shippable as an unsigned app. Phase F (Windows port) is now the primary objective.
 

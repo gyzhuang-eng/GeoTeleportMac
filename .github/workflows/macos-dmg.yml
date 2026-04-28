@@ -1,6 +1,7 @@
 name: macos-dmg
 
 on:
+  workflow_dispatch:
   pull_request:
     paths:
       - "GeoTeleportMac/**"
@@ -21,13 +22,17 @@ on:
 
 jobs:
   build:
-    runs-on: macos-latest
+    runs-on: macos-15
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+      - name: Show toolchain versions
+        run: |
+          sw_vers
+          xcodebuild -version
+          rustc --version
+          cargo --version
 
       - name: Build unsigned DMG
         run: ./build_dmg.sh
