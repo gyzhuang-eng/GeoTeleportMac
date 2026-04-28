@@ -56,7 +56,7 @@ internal sealed class MainForm : Form
 public class AppBridge
 {
     private readonly MainForm _form;
-    public AppBridge(MainForm form) { _form = form; }
+    internal AppBridge(MainForm form) { _form = form; }
 
     public string EnumerateDevices()
     {

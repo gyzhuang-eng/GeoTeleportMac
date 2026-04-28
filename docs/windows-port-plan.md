@@ -31,7 +31,15 @@ the existing C ABI.
 - Local Windows command:
 
   ```powershell
+  winget install -e --id Rustlang.Rustup
+  winget install -e --id NASM.NASM
+  winget install -e --id Microsoft.DotNet.SDK.8
+
+  # Reopen PowerShell after installing Rust.
   ./scripts/build_windows_core.ps1 -Release
+
+  # If link.exe or MSVC tools are missing:
+  winget install -e --id Microsoft.VisualStudio.2022.BuildTools --override "--passive --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
   ```
 
 - CI entry point: `.github/workflows/native-device-core-windows.yml`.

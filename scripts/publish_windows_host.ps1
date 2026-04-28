@@ -10,10 +10,25 @@ $hostProject = Join-Path $repoRoot "windows-host\GeoTeleportWindows\GeoTeleportW
 $coreDir = Join-Path $repoRoot "native-device-core"
 $target = "x86_64-pc-windows-msvc"
 
+if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
+    throw @"
+dotnet is required but was not found in PATH.
+
+Install the .NET 8 SDK on Windows:
+  winget install -e --id Microsoft.DotNet.SDK.8
+
+Then close and reopen PowerShell, and verify:
+  dotnet --info
+"@
+}
+
 & (Join-Path $repoRoot "scripts\build_windows_core.ps1") -Target $target -Release
 
 Write-Host "=> Publishing GeoTeleport Windows host..."
 dotnet publish $hostProject -c $Configuration -r $Runtime --self-contained true /p:PublishSingleFile=true
+if ($LASTEXITCODE -ne 0) {
+    throw "dotnet publish failed with exit code $LASTEXITCODE."
+}
 
 $publishDir = Join-Path $repoRoot "windows-host\GeoTeleportWindows\bin\$Configuration\net8.0-windows\$Runtime\publish"
 $coreDll = Join-Path $coreDir "target\$target\release\geoteleport_device_core.dll"

@@ -60,10 +60,26 @@ Create a local unsigned DMG from a Release build:
 
 ## Windows Core Build
 
-On Windows, build the shared Rust core artifacts with:
+On Windows, install the local build dependencies first:
+
+```powershell
+winget install -e --id Rustlang.Rustup
+winget install -e --id NASM.NASM
+winget install -e --id Microsoft.DotNet.SDK.8
+```
+
+Close and reopen PowerShell after installing Rust so `cargo` is available in
+`PATH`. Then build the shared Rust core artifacts with:
 
 ```powershell
 ./scripts/build_windows_core.ps1 -Release
+```
+
+If the Rust build later reports a missing `link.exe` or MSVC toolchain, install
+C++ Build Tools:
+
+```powershell
+winget install -e --id Microsoft.VisualStudio.2022.BuildTools --override "--passive --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
 ```
 
 Publish the thin Windows host app with the native core artifacts copied beside it:
