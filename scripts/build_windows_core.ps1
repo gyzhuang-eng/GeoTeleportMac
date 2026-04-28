@@ -8,6 +8,36 @@ $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $coreDir = Join-Path $repoRoot "native-device-core"
 
+function Get-NasmCommand {
+    $cmd = Get-Command nasm -ErrorAction SilentlyContinue
+    if ($cmd) {
+        return $cmd.Source
+    }
+
+    $candidateDirs = @()
+    if ($env:ProgramFiles) {
+        $candidateDirs += (Join-Path $env:ProgramFiles "NASM")
+    }
+
+    $programFilesX86 = [Environment]::GetEnvironmentVariable("ProgramFiles(x86)")
+    if ($programFilesX86) {
+        $candidateDirs += (Join-Path $programFilesX86 "NASM")
+    }
+    if ($env:LOCALAPPDATA) {
+        $candidateDirs += (Join-Path $env:LOCALAPPDATA "bin\NASM")
+    }
+
+    foreach ($dir in $candidateDirs) {
+        $candidate = Join-Path $dir "nasm.exe"
+        if (Test-Path $candidate) {
+            $env:PATH = "$dir;$env:PATH"
+            return $candidate
+        }
+    }
+
+    return $null
+}
+
 if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
     throw @"
 cargo is required but was not found in PATH.
@@ -24,8 +54,10 @@ If a later build error mentions link.exe or MSVC tools, install C++ Build Tools:
 "@
 }
 
-if ($Target -like "*windows*" -and -not (Get-Command nasm -ErrorAction SilentlyContinue)) {
-    throw @"
+if ($Target -like "*windows*") {
+    $nasmCommand = Get-NasmCommand
+    if (-not $nasmCommand) {
+        throw @"
 nasm is required for the Windows native core build but was not found in PATH.
 
 Install NASM on Windows:
@@ -34,6 +66,9 @@ Install NASM on Windows:
 Then close and reopen PowerShell, and verify:
   nasm -v
 "@
+    }
+
+    Write-Host "=> Using NASM: $nasmCommand"
 }
 
 $args = @("build", "--target", $Target)
