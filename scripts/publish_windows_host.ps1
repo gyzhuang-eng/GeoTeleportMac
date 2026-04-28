@@ -1,6 +1,7 @@
 param(
     [string]$Runtime = "win-x64",
-    [string]$Configuration = "Release"
+    [string]$Configuration = "Release",
+    [string]$OutputRoot = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -9,7 +10,11 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 $hostProject = Join-Path $repoRoot "windows-host\GeoTeleportWindows\GeoTeleportWindows.csproj"
 $coreDir = Join-Path $repoRoot "native-device-core"
 $target = "x86_64-pc-windows-msvc"
-$publishDir = Join-Path $repoRoot "windows-host\GeoTeleportWindows\bin\$Configuration\net8.0-windows\$Runtime\publish"
+if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
+    $OutputRoot = Join-Path $repoRoot "dist\windows"
+}
+$packageName = "GeoTeleportWindows-$Runtime"
+$publishDir = Join-Path $OutputRoot $packageName
 
 if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
     throw @"
@@ -23,7 +28,7 @@ Then close and reopen PowerShell, and verify:
 "@
 }
 
-& (Join-Path $repoRoot "scripts\build_windows_core.ps1") -Target $target -Release
+& (Join-Path $repoRoot "scripts\build_windows_core.ps1") -Target $target -Release -QuietArtifacts
 
 Write-Host "=> Publishing GeoTeleport Windows host..."
 if (Test-Path -LiteralPath $publishDir) {
@@ -32,6 +37,7 @@ if (Test-Path -LiteralPath $publishDir) {
     Remove-Item -LiteralPath $publishDir -Recurse -Force
 }
 
+New-Item -ItemType Directory -Force -Path $OutputRoot | Out-Null
 dotnet publish $hostProject -c $Configuration -r $Runtime --self-contained true /p:PublishSingleFile=true -o $publishDir
 if ($LASTEXITCODE -ne 0) {
     throw "dotnet publish failed with exit code $LASTEXITCODE."
@@ -45,3 +51,5 @@ Copy-Item $coreExe $publishDir -Force
 
 Write-Host "=> Windows host package ready:"
 Write-Host "   $publishDir"
+Write-Host "=> Launch:"
+Write-Host "   $publishDir\GeoTeleportWindows.exe"

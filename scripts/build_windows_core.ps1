@@ -1,6 +1,7 @@
 param(
     [string]$Target = "x86_64-pc-windows-msvc",
-    [switch]$Release
+    [switch]$Release,
+    [switch]$QuietArtifacts
 )
 
 $ErrorActionPreference = "Stop"
@@ -96,9 +97,11 @@ try {
         throw "Expected DLL artifact missing: $dll"
     }
 
-    Write-Host "=> Windows core artifacts ready:"
-    Write-Host "   $exe"
-    Write-Host "   $dll"
+    Write-Host "=> Windows core artifacts ready."
+    if (-not $QuietArtifacts) {
+        Write-Host "   $exe"
+        Write-Host "   $dll"
+    }
 }
 finally {
     Pop-Location

@@ -2,69 +2,107 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>GeoTeleport Windows</title>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <div id="map"></div>
 
-  <!-- Top-left: Device panel -->
-  <div class="glass-panel top-left" id="device-panel">
-    <div class="panel-header">Device Connection</div>
-    <div class="field-row">
-      <select id="device-select">
-        <option value="">No device detected...</option>
-      </select>
-      <button id="refresh-btn">⟳</button>
-    </div>
-    <div class="actions-row">
-      <button id="info-btn" class="secondary">Device Info</button>
-      <button id="export-btn" class="secondary">Export Logs</button>
-    </div>
+  <div class="center-pin" aria-hidden="true">
+    <div class="pin-ring"></div>
+    <div class="pin-dot"></div>
+    <div class="pin-head">⌖</div>
   </div>
 
-  <!-- Top-right: Location controls -->
-  <div class="glass-panel top-right" id="location-panel">
-    <div class="panel-header">Target Location</div>
-    <div class="coordinate-fields">
-      <div class="field">
-        <label>Latitude</label>
-        <input type="text" id="lat-input" value="37.334900" />
-      </div>
-      <div class="field">
-        <label>Longitude</label>
-        <input type="text" id="lon-input" value="-122.009020" />
-      </div>
-    </div>
-    <div class="presets">
-      <div class="preset-title">Presets</div>
-      <div class="preset-grid">
-        <button class="preset-btn" data-lat="37.334900" data-lon="-122.009020">Cupertino</button>
-        <button class="preset-btn" data-lat="40.7128" data-lon="-74.0060">New York</button>
-        <button class="preset-btn" data-lat="51.5074" data-lon="-0.1278">London</button>
-        <button class="preset-btn" data-lat="35.6895" data-lon="139.6917">Tokyo</button>
-      </div>
-    </div>
-  </div>
+  <main class="hud">
+    <section class="top-bar">
+      <div class="left-stack">
+        <section class="glass-panel device-card">
+          <div class="device-icon" id="device-icon">⌁</div>
+          <div class="device-copy">
+            <div class="mono-title" id="hardware-title">NO DEVICE</div>
+            <div class="muted-line" id="hardware-subtitle">Plug in via USB and trust this computer.</div>
+          </div>
+        </section>
 
-  <!-- Bottom-center: Main actions & Status -->
-  <div class="glass-panel bottom-center" id="action-panel">
-    <div class="main-actions">
-      <button id="set-btn" class="primary-btn">Teleport</button>
-      <button id="clear-btn" class="danger-btn">Clear Location</button>
-    </div>
-    <div class="status-bar" id="status-text">Ready</div>
-  </div>
+        <section class="glass-panel env-card">
+          <span class="status-dot" id="env-dot"></span>
+          <span class="mono-small" id="env-text">ENV: PROBING</span>
+          <select id="device-select" title="Connected iPhone"></select>
+          <button class="icon-btn" id="refresh-btn" title="Refresh devices">↻</button>
+        </section>
 
-  <!-- Bottom-left: Log console (optional, hidden by default but can slide up) -->
-  <div class="glass-panel bottom-left" id="log-panel">
-    <div class="log-header">
-      Log Output
-      <button id="clear-log-btn" class="tiny-btn">Clear</button>
-    </div>
-    <div class="log-content" id="log-content"></div>
-  </div>
+        <section class="glass-panel multi-device-card hidden" id="multi-device-card">
+          <div class="small-icon">▤</div>
+          <div>
+            <div class="mono-title" id="multi-device-title">Multiple devices</div>
+            <div class="muted-line">Select which device to teleport.</div>
+          </div>
+        </section>
+      </div>
+
+      <div class="right-stack">
+        <section class="glass-panel target-card">
+          <div class="search-row">
+            <span class="search-icon">⌕</span>
+            <input id="city-input" type="search" autocomplete="off" spellcheck="false" placeholder="Search city...">
+            <button class="icon-btn" id="clear-search-btn" title="Clear search">×</button>
+            <button class="icon-btn accent" id="search-btn" title="Search city">➜</button>
+          </div>
+
+          <div class="coordinate-fields">
+            <label class="tech-input" id="lat-field">
+              <span>LAT</span>
+              <input type="text" id="lat-input" value="25.185317" inputmode="decimal">
+            </label>
+            <label class="tech-input" id="lon-field">
+              <span>LON</span>
+              <input type="text" id="lon-input" value="55.281516" inputmode="decimal">
+            </label>
+          </div>
+        </section>
+
+        <section class="glass-panel preset-card">
+          <button class="preset-btn orange" data-name="DUBAI" data-lat="25.185317" data-lon="55.281516"><span>🇦🇪</span><b>DUBAI</b></button>
+          <button class="preset-btn blue" data-name="Abu Dhabi" data-lat="24.340142" data-lon="54.518667"><span>🇦🇪</span><b>Abu Dhabi</b></button>
+          <button class="preset-btn purple" data-name="Hanoi" data-lat="20.992498" data-lon="105.944606"><span>🇻🇳</span><b>Hanoi</b></button>
+          <button class="preset-btn pink" data-name="Tokyo" data-lat="35.689500" data-lon="139.691700"><span>🇯🇵</span><b>Tokyo</b></button>
+          <button class="preset-btn cyan" data-name="New York" data-lat="40.712800" data-lon="-74.006000"><span>🇺🇸</span><b>New York</b></button>
+          <button class="preset-btn green" data-name="London" data-lat="51.507400" data-lon="-0.127800"><span>🇬🇧</span><b>London</b></button>
+          <button class="preset-btn indigo" data-name="Paris" data-lat="48.856600" data-lon="2.352200"><span>🇫🇷</span><b>Paris</b></button>
+          <button class="preset-btn red" data-name="Shenzhen" data-lat="22.543100" data-lon="114.057900"><span>🇨🇳</span><b>Shenzhen</b></button>
+        </section>
+      </div>
+    </section>
+
+    <section class="bottom-stack">
+      <div class="action-row">
+        <button id="set-btn" class="jump-btn">>>> CONFIRM & JUMP <<<</button>
+        <button id="clear-btn" class="clear-btn">⌧ CLEAR</button>
+      </div>
+
+      <section class="status-card" id="status-card">
+        <div class="status-icon" id="status-icon">✓</div>
+        <div class="status-copy">
+          <div id="status-title">Ready to teleport</div>
+          <div id="status-subtitle">Drag the map, search a city, or tap a preset.</div>
+        </div>
+        <button class="log-toggle" id="log-toggle">Log ▴</button>
+      </section>
+
+      <section class="log-panel hidden" id="log-panel">
+        <div class="log-header">
+          <span>DEBUG LOG</span>
+          <span id="log-count">0/400</span>
+          <button class="icon-btn accent" id="export-btn" title="Export diagnostics">⇧</button>
+          <button class="icon-btn" id="clear-log-btn" title="Clear log">⌫</button>
+        </div>
+        <pre id="log-content"></pre>
+      </section>
+    </section>
+  </main>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="app.js"></script>

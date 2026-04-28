@@ -4,6 +4,7 @@ UserInterfaceState.xcuserstate
 xcuserdata/
 DerivedData/
 build/
+dist/
 .build/
 .swiftpm/
 *.ipa

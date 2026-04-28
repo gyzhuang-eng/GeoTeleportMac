@@ -23,9 +23,11 @@ internal sealed class MainForm : Form
 
     public MainForm()
     {
-        Text = "GeoTeleport Windows";
-        MinimumSize = new Size(860, 560);
+        Text = "GeoTeleport";
+        MinimumSize = new Size(800, 650);
+        Size = new Size(1100, 760);
         StartPosition = FormStartPosition.CenterScreen;
+        BackColor = Color.Black;
         Controls.Add(webView);
         
         _ = InitializeAsync();

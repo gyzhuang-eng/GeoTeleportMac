@@ -88,8 +88,14 @@ Publish the thin Windows host app with the native core artifacts copied beside i
 ./scripts/publish_windows_host.ps1
 ```
 
-The publish output contains the Windows app, `geoteleport_device_core.dll`, and
-`geoteleport-device-core.exe` for the iOS 17+ daemon path.
+The Windows package is written to a short, repo-root path:
+
+```text
+dist/windows/GeoTeleportWindows-win-x64/
+```
+
+That folder contains `GeoTeleportWindows.exe`, `geoteleport_device_core.dll`,
+and `geoteleport-device-core.exe` for the iOS 17+ daemon path.
 
 ## Unsigned First Run
 
