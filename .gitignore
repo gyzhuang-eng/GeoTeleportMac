@@ -13,3 +13,5 @@ build/
 *.dSYM.zip
 .omx/
 native-device-core/target/
+windows-host/**/bin/
+windows-host/**/obj/

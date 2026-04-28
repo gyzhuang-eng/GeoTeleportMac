@@ -1,0 +1,47 @@
+name: windows-host
+
+on:
+  pull_request:
+    paths:
+      - "native-device-core/**"
+      - "windows-host/**"
+      - "scripts/build_windows_core.ps1"
+      - "scripts/publish_windows_host.ps1"
+      - ".github/workflows/windows-host.yml"
+  push:
+    branches:
+      - "v3/windows-host"
+    paths:
+      - "native-device-core/**"
+      - "windows-host/**"
+      - "scripts/build_windows_core.ps1"
+      - "scripts/publish_windows_host.ps1"
+      - ".github/workflows/windows-host.yml"
+
+jobs:
+  publish:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Publish Windows host
+        shell: pwsh
+        run: ./scripts/publish_windows_host.ps1
+
+      - name: Upload Windows host
+        uses: actions/upload-artifact@v4
+        with:
+          name: geoteleport-windows-x64
+          path: windows-host/GeoTeleportWindows/bin/Release/net8.0-windows/win-x64/publish/**
+          if-no-files-found: error

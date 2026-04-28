@@ -58,6 +58,23 @@ Create a local unsigned DMG from a Release build:
 ./build_dmg.sh
 ```
 
+## Windows Core Build
+
+On Windows, build the shared Rust core artifacts with:
+
+```powershell
+./scripts/build_windows_core.ps1 -Release
+```
+
+Publish the thin Windows host app with the native core artifacts copied beside it:
+
+```powershell
+./scripts/publish_windows_host.ps1
+```
+
+The publish output contains the Windows app, `geoteleport_device_core.dll`, and
+`geoteleport-device-core.exe` for the iOS 17+ daemon path.
+
 ## Unsigned First Run
 
 For the current unsigned build, macOS will block the first launch. Open it intentionally through System Settings:
@@ -86,6 +103,7 @@ native-device-core/
   src/main.rs                       CLI and iOS 17 daemon entry points
 docs/
   v3-no-python-foundation-plan.md   active development handoff
+  windows-port-plan.md              Phase F Windows port plan
 ```
 
 ## License

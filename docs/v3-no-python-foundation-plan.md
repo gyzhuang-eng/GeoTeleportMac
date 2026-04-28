@@ -376,7 +376,7 @@ use Process (inherently long-running, needs stdin/stdout pipes).
 | C     | DMG packaging, first-run UX            | ✅ DONE       |
 | D     | Consumer-Mac validation                | ✅ DONE       |
 | E     | Cross-platform core extraction         | ✅ DONE       |
-| F     | Windows port                           | 🟡 IN PROGRESS (Planning) |
+| F     | Windows port                           | 🟡 CODE COMPLETE (Windows validation pending) |
 
 A previous revision of this plan marked Phases 1–3 as "complete in practice."
 That claim conflated "implemented on a developer machine" with "shippable."
@@ -535,6 +535,7 @@ In execution order for whoever picks this up next:
 - Decide the Windows UI stack and installer path.
 - Scope the USB driver / usbmuxd dependency story.
 - Keep `native-device-core` changes portable and routed through host adapters.
+- Track concrete Windows work packages in `docs/windows-port-plan.md`.
 
 Completed work that should not be reopened without a concrete bug:
 
@@ -600,7 +601,7 @@ Relevant self-checks (run against the built `.app`):
 Record material changes here so a new reader can see how the plan evolved
 without trawling git history.
 
-- **2026-04-28 — Clean-run blocker cleanup and macOS DMG workflow.** Runtime
+- **2026-04-28 — Clean-run blocker cleanup and Phase F start.** Runtime
   availability now blocks only on the bundled native device core; Xcode and
   `pymobiledevice3` are retained only as deprecated compatibility blocker codes
   and are not probed on the consumer path. Removed the remaining Xcode metadata
@@ -608,6 +609,14 @@ without trawling git history.
   GitHub Actions workflow so the unsigned macOS DMG can be downloaded from
   branch builds. Lowered the macOS deployment target to 14.0 so CI can build
   on standard GitHub macOS runners instead of requiring the local Xcode 26 SDK.
+
+- **2026-04-28 — Phase F Windows host baseline.** Added a thin native Windows
+  host in `windows-host/GeoTeleportWindows` using .NET Windows Forms and the
+  Rust C ABI DLL. Added Windows publish scripts and CI workflows for the Rust
+  core and host package. The host supports enumeration, device-info, set/clear,
+  diagnostics export, and iOS 17+ daemon fallback through the bundled CLI helper.
+  Remaining gate: run the Windows workflows and hardware validation on a real
+  Windows machine.
 
 - **2026-04-28 — Phase C/D validation complete (macOS).** Successfully completed clean-Mac validation. Generated `GeoTeleportMacV3.dmg` and tested on a pristine macOS machine with no developer toolchain (no Xcode, Python, Homebrew, or pymobiledevice3). Successfully performed hardware tests for both iOS 17+ and iOS 16- devices, confirming USB enumeration, device info fetching, and location setting/clearing. The macOS product is now shippable as an unsigned app. Phase F (Windows port) is now the primary objective.
 
