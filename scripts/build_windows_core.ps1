@@ -41,16 +41,16 @@ function Get-NasmCommand {
 
 if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
     throw @"
-需要 cargo，但当前 PATH 中找不到。
+cargo is required but was not found in PATH.
 
-请在 Windows 上安装 Rust stable：
+Install Rust stable on Windows:
   winget install -e --id Rustlang.Rustup
 
-然后关闭并重新打开 PowerShell，再验证：
+Then close and reopen PowerShell, and verify:
   cargo --version
   rustup target add $Target
 
-如果后续构建错误提到 link.exe 或 MSVC 工具，请安装 C++ Build Tools：
+If a later build error mentions link.exe or MSVC tools, install C++ Build Tools:
   winget install -e --id Microsoft.VisualStudio.2022.BuildTools --override "--passive --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
 "@
 }
@@ -59,17 +59,17 @@ if ($Target -like "*windows*") {
     $nasmCommand = Get-NasmCommand
     if (-not $nasmCommand) {
         throw @"
-Windows 原生核心构建需要 nasm，但当前 PATH 中找不到。
+nasm is required for the Windows native core build but was not found in PATH.
 
-请在 Windows 上安装 NASM：
+Install NASM on Windows:
   winget install -e --id NASM.NASM
 
-然后关闭并重新打开 PowerShell，再验证：
+Then close and reopen PowerShell, and verify:
   nasm -v
 "@
     }
 
-    Write-Host "=> 使用 NASM：$nasmCommand"
+    Write-Host "=> Using NASM: $nasmCommand"
 }
 
 $args = @("build", "--target", $Target)
@@ -79,10 +79,10 @@ if ($Release) {
 
 Push-Location $coreDir
 try {
-    Write-Host "=> 正在构建 native-device-core，目标：$Target..."
+    Write-Host "=> Building native-device-core for $Target..."
     cargo @args
     if ($LASTEXITCODE -ne 0) {
-        throw "cargo build 失败，退出码 $LASTEXITCODE。"
+        throw "cargo build failed with exit code $LASTEXITCODE."
     }
 
     $profile = if ($Release) { "release" } else { "debug" }
@@ -91,13 +91,13 @@ try {
     $dll = Join-Path $artifactDir "geoteleport_device_core.dll"
 
     if (!(Test-Path $exe)) {
-        throw "缺少预期的 CLI 产物：$exe"
+        throw "Expected CLI artifact missing: $exe"
     }
     if (!(Test-Path $dll)) {
-        throw "缺少预期的 DLL 产物：$dll"
+        throw "Expected DLL artifact missing: $dll"
     }
 
-    Write-Host "=> Windows 核心产物已就绪。"
+    Write-Host "=> Windows core artifacts ready."
     if (-not $QuietArtifacts) {
         Write-Host "   $exe"
         Write-Host "   $dll"
