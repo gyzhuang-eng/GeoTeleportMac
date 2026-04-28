@@ -22,13 +22,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Show runner tools
-        shell: pwsh
-        run: |
-          rustc --version
-          cargo --version
-          rustup --version
-
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -37,6 +30,14 @@ jobs:
       - name: Install native build tools
         shell: pwsh
         run: choco install nasm -y --no-progress
+
+      - name: Show runner tools
+        shell: pwsh
+        run: |
+          rustc --version
+          cargo --version
+          rustup --version
+          nasm -v
 
       - name: Build Windows core
         shell: pwsh

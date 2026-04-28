@@ -1,6 +1,14 @@
 #!/bin/bash
 
-set -e
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
+DERIVED_DATA_PATH="${DERIVED_DATA_PATH:-$ROOT_DIR/build/DerivedData}"
+XCODE_SWIFT_OPTIMIZATION_LEVEL="${XCODE_SWIFT_OPTIMIZATION_LEVEL:-}"
+XCODE_SWIFT_COMPILATION_MODE="${XCODE_SWIFT_COMPILATION_MODE:-}"
+XCODE_ENABLE_PREVIEWS="${XCODE_ENABLE_PREVIEWS:-}"
+
+cd "$ROOT_DIR"
 
 echo "=> Building native-device-core (Release)..."
 cd native-device-core
@@ -8,17 +16,37 @@ cargo build --release
 cd ..
 
 echo "=> Building GeoTeleportMac (Release)..."
-xcodebuild -project GeoTeleportMac.xcodeproj -scheme GeoTeleportMac -configuration Release build -quiet
+XCODEBUILD_ARGS=(
+    -project GeoTeleportMac.xcodeproj
+    -scheme GeoTeleportMac
+    -configuration Release
+    -derivedDataPath "$DERIVED_DATA_PATH"
+    build
+)
+
+if [ -n "$XCODE_SWIFT_OPTIMIZATION_LEVEL" ]; then
+    XCODEBUILD_ARGS+=("SWIFT_OPTIMIZATION_LEVEL=$XCODE_SWIFT_OPTIMIZATION_LEVEL")
+fi
+
+if [ -n "$XCODE_SWIFT_COMPILATION_MODE" ]; then
+    XCODEBUILD_ARGS+=("SWIFT_COMPILATION_MODE=$XCODE_SWIFT_COMPILATION_MODE")
+fi
+
+if [ -n "$XCODE_ENABLE_PREVIEWS" ]; then
+    XCODEBUILD_ARGS+=("ENABLE_PREVIEWS=$XCODE_ENABLE_PREVIEWS")
+fi
+
+xcodebuild "${XCODEBUILD_ARGS[@]}"
 
 # Find the built .app
-APP_EXECUTABLE=$(find ~/Library/Developer/Xcode/DerivedData -name "GeoTeleportMacV3" -path "*/Build/Products/Release/GeoTeleportMacV3.app/Contents/MacOS/GeoTeleportMacV3" | head -1)
+APP_PATH="$DERIVED_DATA_PATH/Build/Products/Release/GeoTeleportMacV3.app"
+APP_EXECUTABLE="$APP_PATH/Contents/MacOS/GeoTeleportMacV3"
 
-if [ -z "$APP_EXECUTABLE" ]; then
+if [ ! -x "$APP_EXECUTABLE" ]; then
     echo "Error: Release build of GeoTeleportMacV3.app not found."
     exit 1
 fi
 
-APP_PATH=$(dirname "$(dirname "$(dirname "$APP_EXECUTABLE")")")
 echo "=> Found App: $APP_PATH"
 
 echo "=> Preparing DMG staging directory..."

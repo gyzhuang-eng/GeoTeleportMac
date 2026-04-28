@@ -26,6 +26,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Install native build tools
+        shell: pwsh
+        run: choco install nasm -y --no-progress
+
       - name: Show runner tools
         shell: pwsh
         run: |
@@ -33,20 +47,7 @@ jobs:
           rustc --version
           cargo --version
           rustup --version
-
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-pc-windows-msvc
-
-      - name: Install native build tools
-        shell: pwsh
-        run: choco install nasm -y --no-progress
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: "8.0.x"
+          nasm -v
 
       - name: Publish Windows host
         shell: pwsh
