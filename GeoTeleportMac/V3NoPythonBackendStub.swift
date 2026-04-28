@@ -169,15 +169,15 @@ struct NoPythonBackendStub: DeviceBackend {
 
     static func bootstrapNextAction(for blockers: [DeviceAgentAssessmentBlockerCode]) -> String {
         if blockers.contains(.xcodeToolchainMissing) {
-            return "GeoTeleport requires Xcode on this build. The shipping version will not. (internal: Phase B.3)"
+            return "GeoTeleport cannot start because this build reported a deprecated bootstrap blocker. Refresh the app and export diagnostics if it persists."
         }
         if blockers.contains(.pymobiledevice3Missing) {
-            return "GeoTeleport requires pymobiledevice3 on this build. The shipping version will not. (internal: Phase B.3)"
+            return "GeoTeleport cannot start because this build reported a deprecated bootstrap blocker. Refresh the app and export diagnostics if it persists."
         }
         if blockers.contains(.bundledDeviceCoreMissing) {
-            return "GeoTeleport still lacks its bundled device core on this build. Phase B.3 replaces the developer-machine bridge."
+            return "GeoTeleport cannot find its bundled device core. Reinstall the app from the DMG and try again."
         }
-        return "Keep the bootstrap boundary separate from session readiness while the bundled device core is still missing."
+        return "Attach an iPhone over USB, unlock it, and trust this Mac."
     }
 
     func availabilityEvents() -> [DeviceAgentDiagnosticEvent] {

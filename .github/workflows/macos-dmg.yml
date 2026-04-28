@@ -1,0 +1,40 @@
+name: macos-dmg
+
+on:
+  pull_request:
+    paths:
+      - "GeoTeleportMac/**"
+      - "GeoTeleportMac.xcodeproj/**"
+      - "native-device-core/**"
+      - "build_dmg.sh"
+      - ".github/workflows/macos-dmg.yml"
+  push:
+    branches:
+      - "v3/windows-host"
+      - "v3/device-core-rust"
+    paths:
+      - "GeoTeleportMac/**"
+      - "GeoTeleportMac.xcodeproj/**"
+      - "native-device-core/**"
+      - "build_dmg.sh"
+      - ".github/workflows/macos-dmg.yml"
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build unsigned DMG
+        run: ./build_dmg.sh
+
+      - name: Upload unsigned DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: GeoTeleportMacV3-unsigned-dmg
+          path: GeoTeleportMacV3.dmg
+          if-no-files-found: error

@@ -113,9 +113,9 @@ enum DeviceAgentAssessmentBlockerCode: String, Codable, Equatable {
     var title: String {
         switch self {
         case .xcodeToolchainMissing:
-            return "Xcode Toolchain Missing"
+            return "Deprecated Bootstrap Blocker"
         case .pymobiledevice3Missing:
-            return "pymobiledevice3 Missing"
+            return "Deprecated Bootstrap Blocker"
         case .bundledDeviceCoreMissing:
             return "Bundled Device Core Missing"
         case .noDevice:
@@ -249,7 +249,7 @@ enum DeviceAgentInjectionTransportState: String, Codable, Equatable {
         case .nativeRsd:
             return "Native RSD"
         case .xcodeTestHarness:
-            return "Xcode Test Harness"
+            return "Deprecated Transport"
         }
     }
 }
@@ -269,7 +269,7 @@ enum DeviceAgentInjectionTransportContractPhase: String, Codable, Equatable {
         case .nativeRsd:
             return "Native RSD"
         case .xcodeTestHarness:
-            return "Xcode Test Harness"
+            return "Deprecated Transport"
         }
     }
 }

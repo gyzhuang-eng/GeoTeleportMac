@@ -1379,11 +1379,11 @@ final class V3AppModel: ObservableObject {
         }
         switch probe.transportState {
         case .nativeLockdown:
-            return "Native lockdown injection is ready; location set/clear will execute directly via the bundled device-core binary without requiring Xcode or a tunnel endpoint."
+            return "Native lockdown injection is ready; location set/clear will execute directly via the bundled device-core binary without an external tunnel endpoint."
         case .nativeRsd:
             return "Native RSD injection via ios17-location-daemon is active (iOS 17+). NativeDeviceCoreIos17LocationController manages the persistent daemon in the main app process."
         case .xcodeTestHarness:
-            return "Direct Xcode-backed location injection is ready, so the primary transport no longer depends on Python or the compatibility tunnel path for this session."
+            return "Deprecated location transport reported ready. Refresh the session and export diagnostics if this persists."
         case .unavailable:
             return nil
         }
@@ -1397,11 +1397,11 @@ final class V3AppModel: ObservableObject {
         }
         switch probe.transportState {
         case .nativeLockdown:
-            return "Run set/clear through the native device-core binary using the resolved UDID, without Xcode or a tunnel endpoint."
+            return "Run set/clear through the native device-core binary using the resolved UDID, without an external tunnel endpoint."
         case .nativeRsd:
             return "Run set/clear through ios17-location-daemon via NativeDeviceCoreIos17LocationController. The daemon will be started automatically on first use."
         case .xcodeTestHarness:
-            return "Run set/clear through the Xcode test harness using the resolved device identifier, without rediscovering tunnel state or depending on the compatibility CLI bridge."
+            return "Refresh the session before running set/clear because a deprecated transport state was reported."
         case .unavailable:
             return nil
         }
@@ -1535,9 +1535,9 @@ final class V3AppModel: ObservableObject {
         case .backendPartial:
             return "Backend only partially available"
         case .xcodeToolchainMissing:
-            return "This build requires a full Xcode install"
+            return "Deprecated bootstrap blocker reported"
         case .pymobiledevice3Missing:
-            return "This build requires pymobiledevice3"
+            return "Deprecated bootstrap blocker reported"
         case .bundledDeviceCoreMissing:
             return "Bundled native device core not present yet"
         case .multipleDevices:
@@ -1592,9 +1592,9 @@ final class V3AppModel: ObservableObject {
         case .backendPartial:
             return "Backend transport sees \(snapshotName), but readiness is still partial. Continue wiring session services."
         case .xcodeToolchainMissing:
-            return "GeoTeleport requires Xcode on this build. The shipping version will not. (internal: Phase B.3)"
+            return "GeoTeleport reported a deprecated bootstrap blocker. Refresh the session and export diagnostics if it persists."
         case .pymobiledevice3Missing:
-            return "GeoTeleport requires pymobiledevice3 on this build. The shipping version will not. (internal: Phase B.3)"
+            return "GeoTeleport reported a deprecated bootstrap blocker. Refresh the session and export diagnostics if it persists."
         case .bundledDeviceCoreMissing:
             return "GeoTeleport still lacks its bundled device core on this build. Phase B.3 replaces the developer-machine bridge."
         case .multipleDevices:

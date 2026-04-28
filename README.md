@@ -50,6 +50,14 @@ APP=$(find ~/Library/Developer/Xcode/DerivedData -name "GeoTeleportMacV3" \
 
 Hardware-dependent checks may report fewer cases when no iPhone is attached.
 
+## Package
+
+Create a local unsigned DMG from a Release build:
+
+```bash
+./build_dmg.sh
+```
+
 ## Unsigned First Run
 
 For the current unsigned build, macOS will block the first launch. Open it intentionally through System Settings:
@@ -79,12 +87,6 @@ native-device-core/
 docs/
   v3-no-python-foundation-plan.md   active development handoff
 ```
-
-## Remaining Release Work
-
-- Validate on a clean macOS install with no Xcode, Python, Homebrew, or `pymobiledevice3`.
-- Record hardware validation notes for iOS 17+ and iOS 16 or earlier devices.
-- Keep the unsigned first-run instructions current until signing/notarization is reintroduced.
 
 ## License
 

@@ -68,11 +68,11 @@ struct V3ViewPresentation {
                     case .backendBootstrap:
                         switch appModel.sessionBlocker {
                         case .xcodeToolchainMissing:
-                            sessionTitle = "Xcode toolchain required on this build"
+                            sessionTitle = "Deprecated bootstrap blocker"
                         case .pymobiledevice3Missing:
-                            sessionTitle = "pymobiledevice3 required on this build"
+                            sessionTitle = "Deprecated bootstrap blocker"
                         case .bundledDeviceCoreMissing:
-                            sessionTitle = "Bundled device core not shipped yet"
+                            sessionTitle = "Bundled device core missing"
                         default:
                             sessionTitle = "Device-agent backend bootstrapping"
                         }
@@ -317,9 +317,9 @@ struct V3ViewPresentation {
             case .backendPartial:
                 return "FINISH SESSION WIRING"
             case .xcodeToolchainMissing:
-                return "INSTALL XCODE"
+                return "REFRESH SESSION"
             case .pymobiledevice3Missing:
-                return "INSTALL PYMOBILEDEVICE3"
+                return "REFRESH SESSION"
             case .bundledDeviceCoreMissing:
                 return "BUNDLE DEVICE CORE"
             case .multipleDevices:

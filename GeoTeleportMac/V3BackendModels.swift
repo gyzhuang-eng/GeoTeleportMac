@@ -100,9 +100,9 @@ enum SessionBlocker: Equatable {
         case .backendPartial:
             return "Backend Partial"
         case .xcodeToolchainMissing:
-            return "Xcode Toolchain Missing"
+            return "Deprecated Bootstrap Blocker"
         case .pymobiledevice3Missing:
-            return "pymobiledevice3 Missing"
+            return "Deprecated Bootstrap Blocker"
         case .bundledDeviceCoreMissing:
             return "Bundled Device Core Missing"
         case .multipleDevices:

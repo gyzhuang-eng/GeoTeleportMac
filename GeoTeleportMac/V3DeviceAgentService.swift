@@ -32,9 +32,9 @@ struct StubDeviceAgentService: DeviceAgentServicing {
             ] + toolchainProbe.events
 
             if blockerCodes.isEmpty {
-                summary = "Child-process agent reachable; current developer build still depends on external tooling until the bundled device core replaces it."
+                summary = "Child-process agent reachable; bundled native device core is available."
             } else {
-                summary = "Child-process agent reachable, but this developer build is blocked on missing external tooling and is not consumer-ready."
+                summary = "Child-process agent reachable, but the bundled native device core is not available."
             }
             return .success(
                 .availability(
@@ -122,17 +122,6 @@ struct StubDeviceAgentService: DeviceAgentServicing {
         }
 
         let checks = [
-            Check(
-                name: "xcode-select-probe-machinery",
-                passed: report.xcodeSelect.status != .broken,
-                detail: report.xcodeSelect.detail
-            ),
-            Check(
-                name: "xcodebuild-probe-machinery",
-                passed: report.xcodebuild.status != .broken,
-                detail: report.xcodebuild.detail
-            ),
-
             Check(
                 name: "native-device-core-probe-machinery",
                 passed: report.nativeDeviceCore.status != .broken,
@@ -556,7 +545,7 @@ private struct SystemUSBProbe {
                 )
             }
         }
-        return enrichWithXcodeMetadata(usbProbe)
+        return enrichWithNativeMetadata(usbProbe)
     }
 
     private static func detectViaSystemProfiler() -> Result<SystemUSBProbe, DeviceAgentFailure> {
@@ -714,7 +703,7 @@ private struct SystemUSBProbe {
         return trimmed
     }
 
-    private static func enrichWithXcodeMetadata(_ probe: SystemUSBProbe) -> SystemUSBProbe {
+    private static func enrichWithNativeMetadata(_ probe: SystemUSBProbe) -> SystemUSBProbe {
         // Preferred UDID set by the main process (UserDefaults → env var) for multi-device selection.
         let preferredUDID = ProcessInfo.processInfo.environment["GTM_PREFERRED_DEVICE_UDID"]
 
@@ -725,18 +714,18 @@ private struct SystemUSBProbe {
             }
 
             // When multiple devices are found, prefer the user's selection if it matches.
-            let effectiveMatch: XcodeAttachedAppleDevice?
+            let effectiveMatch: AttachedAppleDevice?
             if devices.count > 1, let preferred = preferredUDID,
                let found = devices.first(where: { $0.identifier == preferred }) {
                 effectiveMatch = found
             } else {
-                effectiveMatch = XcodeDeviceMetadataProbe.match(for: probe, in: devices)
+                effectiveMatch = NativeDeviceMetadataParser.match(for: probe, in: devices)
             }
 
             guard let match = effectiveMatch else {
                 let message = devices.isEmpty
-                    ? "Native device-core POC did not report a USB-attached iPhone/iPad session for metadata enrichment"
-                    : "Native device-core POC metadata did not match the current USB probe strongly enough to enrich iOS version"
+                    ? "Native device-core did not report a USB-attached iPhone/iPad session for metadata enrichment"
+                    : "Native device-core metadata did not match the current USB probe strongly enough to enrich iOS version"
                 return SystemUSBProbe(
                     isConnected: probe.isConnected || !devices.isEmpty,
                     displayName: probe.displayName ?? devices.first?.name,
@@ -757,12 +746,12 @@ private struct SystemUSBProbe {
             if let iosVersion = match.iosVersion {
                 event = DeviceAgentDiagnosticEvent(
                     level: .info,
-                    message: "Native device-core POC enriched metadata with iOS \(iosVersion) from \(match.name)"
+                    message: "Native device-core enriched metadata with iOS \(iosVersion) from \(match.name)"
                 )
             } else {
                 event = DeviceAgentDiagnosticEvent(
                     level: .warning,
-                    message: "Native device-core POC matched \(match.name), but it did not provide an iOS version"
+                    message: "Native device-core matched \(match.name), but it did not provide an iOS version"
                 )
             }
 
@@ -796,94 +785,29 @@ private struct SystemUSBProbe {
                     events: probe.events + [
                         DeviceAgentDiagnosticEvent(
                             level: .warning,
-                            message: "Native device-core POC unavailable: \(failure.message)"
+                            message: "Native device-core unavailable: \(failure.message)"
                         )
                     ]
                 )
             }
-            switch XcodeDeviceMetadataProbe.fetchAttachedMobileDevices() {
-            case .success(let devices):
-                guard let match = XcodeDeviceMetadataProbe.match(for: probe, in: devices) else {
-                    let message = devices.isEmpty
-                        ? "xcdevice did not report a USB-attached iPhone/iPad session for metadata enrichment"
-                        : "xcdevice metadata did not match the current USB probe strongly enough to enrich iOS version"
-                    return SystemUSBProbe(
-                        isConnected: probe.isConnected,
-                        displayName: probe.displayName,
-                        deviceIdentifier: probe.deviceIdentifier,
-                        serialSuffix: probe.serialSuffix,
-                        speed: probe.speed,
-                        vendorID: probe.vendorID,
-                        productID: probe.productID,
-                        iosVersion: probe.iosVersion,
-                        matchedDeviceCount: probe.matchedDeviceCount,
-                        source: probe.source,
-                        events: probe.events + [
-                            DeviceAgentDiagnosticEvent(
-                                level: .warning,
-                                message: "Native device-core POC unavailable: \(failure.message)"
-                            ),
-                            DeviceAgentDiagnosticEvent(level: .warning, message: message)
-                        ]
-                    )
-                }
-
-                let event: DeviceAgentDiagnosticEvent
-                if let iosVersion = match.iosVersion {
-                    event = DeviceAgentDiagnosticEvent(
-                        level: .info,
-                        message: "xcdevice fallback enriched metadata with iOS \(iosVersion) from \(match.name)"
-                    )
-                } else {
-                    event = DeviceAgentDiagnosticEvent(
+            return SystemUSBProbe(
+                isConnected: probe.isConnected,
+                displayName: probe.displayName,
+                deviceIdentifier: probe.deviceIdentifier,
+                serialSuffix: probe.serialSuffix,
+                speed: probe.speed,
+                vendorID: probe.vendorID,
+                productID: probe.productID,
+                iosVersion: probe.iosVersion,
+                matchedDeviceCount: probe.matchedDeviceCount,
+                source: probe.source,
+                events: probe.events + [
+                    DeviceAgentDiagnosticEvent(
                         level: .warning,
-                        message: "xcdevice fallback matched \(match.name), but it did not provide an iOS version"
+                        message: "Native device-core unavailable: \(failure.message)"
                     )
-                }
-
-                return SystemUSBProbe(
-                    isConnected: probe.isConnected,
-                    displayName: probe.displayName ?? match.name,
-                    deviceIdentifier: match.identifier.isEmpty ? probe.deviceIdentifier : match.identifier,
-                    serialSuffix: probe.serialSuffix,
-                    speed: probe.speed,
-                    vendorID: probe.vendorID,
-                    productID: probe.productID,
-                    iosVersion: match.iosVersion ?? probe.iosVersion,
-                    matchedDeviceCount: probe.matchedDeviceCount,
-                    source: probe.source,
-                    events: probe.events + [
-                        DeviceAgentDiagnosticEvent(
-                            level: .warning,
-                            message: "Native device-core POC unavailable: \(failure.message)"
-                        ),
-                        event
-                    ]
-                )
-            case .failure(let fallbackFailure):
-                return SystemUSBProbe(
-                    isConnected: probe.isConnected,
-                    displayName: probe.displayName,
-                    deviceIdentifier: probe.deviceIdentifier,
-                    serialSuffix: probe.serialSuffix,
-                    speed: probe.speed,
-                    vendorID: probe.vendorID,
-                    productID: probe.productID,
-                    iosVersion: probe.iosVersion,
-                    matchedDeviceCount: probe.matchedDeviceCount,
-                    source: probe.source,
-                    events: probe.events + [
-                        DeviceAgentDiagnosticEvent(
-                            level: .warning,
-                            message: "Native device-core POC unavailable: \(failure.message)"
-                        ),
-                        DeviceAgentDiagnosticEvent(
-                            level: .warning,
-                            message: "xcdevice metadata enrichment unavailable: \(fallbackFailure.message)"
-                        )
-                    ]
-                )
-            }
+                ]
+            )
         }
     }
 }
@@ -896,7 +820,7 @@ private struct USBMobileAppleDevice {
     let productID: String?
 }
 
-private struct XcodeAttachedAppleDevice {
+private struct AttachedAppleDevice {
     let name: String
     let identifier: String
     let operatingSystemVersion: String?
@@ -914,25 +838,11 @@ private struct XcodeAttachedAppleDevice {
     }
 }
 
-private enum XcodeDeviceMetadataProbe {
-    static func fetchAttachedMobileDevices() -> Result<[XcodeAttachedAppleDevice], DeviceAgentFailure> {
-        let output = runCaptured(
-            executable: "/usr/bin/xcrun",
-            arguments: ["xcdevice", "list"]
-        )
-
-        switch output {
-        case .success(let text):
-            return parseAttachedMobileDevices(from: text)
-        case .failure(let failure):
-            return .failure(failure)
-        }
-    }
-
+private enum NativeDeviceMetadataParser {
     static func match(
         for probe: SystemUSBProbe,
-        in devices: [XcodeAttachedAppleDevice]
-    ) -> XcodeAttachedAppleDevice? {
+        in devices: [AttachedAppleDevice]
+    ) -> AttachedAppleDevice? {
         guard !devices.isEmpty else { return nil }
 
         if let probeUDID = probe.deviceIdentifier, !probeUDID.isEmpty {
@@ -966,7 +876,7 @@ private enum XcodeDeviceMetadataProbe {
         return normalized.isEmpty ? nil : normalized
     }
 
-    static func parseAttachedMobileDevices(from text: String) -> Result<[XcodeAttachedAppleDevice], DeviceAgentFailure> {
+    static func parseAttachedMobileDevices(from text: String) -> Result<[AttachedAppleDevice], DeviceAgentFailure> {
         let payload = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let data = payload.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
@@ -978,7 +888,7 @@ private enum XcodeDeviceMetadataProbe {
             )
         }
 
-        let devices = json.compactMap { dictionary -> XcodeAttachedAppleDevice? in
+        let devices = json.compactMap { dictionary -> AttachedAppleDevice? in
             guard (dictionary["simulator"] as? Bool) != true else { return nil }
             let name = (dictionary["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             guard !name.isEmpty else { return nil }
@@ -988,7 +898,7 @@ private enum XcodeDeviceMetadataProbe {
                interface.lowercased() != "usb" {
                 return nil
             }
-            return XcodeAttachedAppleDevice(
+            return AttachedAppleDevice(
                 name: name,
                 identifier: (dictionary["identifier"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "",
                 operatingSystemVersion: dictionary["operatingSystemVersion"] as? String,
@@ -1008,14 +918,14 @@ private enum NativeDeviceCoreMetadataProbe {
         if let binaryPath = resolveBinaryPath() {
             return "native device-core helper found at \(binaryPath)"
         }
-        return "Bundled native device-core POC binary is not built yet."
+        return "Bundled native device-core binary is not built yet."
     }
 
-    static func fetchAttachedMobileDevices() -> Result<[XcodeAttachedAppleDevice], DeviceAgentFailure> {
+    static func fetchAttachedMobileDevices() -> Result<[AttachedAppleDevice], DeviceAgentFailure> {
         if NativeDeviceCoreFFI.isAvailable {
             do {
                 let text = try NativeDeviceCoreFFI.enumerateDevices()
-                return XcodeDeviceMetadataProbe.parseAttachedMobileDevices(from: text)
+                return NativeDeviceMetadataParser.parseAttachedMobileDevices(from: text)
             } catch {
                 V3TelemetryStore.shared.record(
                     type: .enumFailure,
@@ -1033,13 +943,13 @@ private enum NativeDeviceCoreMetadataProbe {
             return .failure(
                 DeviceAgentFailure(
                     code: .agentUnavailable,
-                    message: "Bundled native device-core POC binary is not built yet."
+                    message: "Bundled native device-core binary is not built yet."
                 )
             )
         }
         switch runCaptured(executable: binaryPath, arguments: ["enumerate-ios-devices"]) {
         case .success(let text):
-            return XcodeDeviceMetadataProbe.parseAttachedMobileDevices(from: text)
+            return NativeDeviceMetadataParser.parseAttachedMobileDevices(from: text)
         case .failure(let failure):
             V3TelemetryStore.shared.record(
                 type: .enumFailure,
@@ -1049,7 +959,7 @@ private enum NativeDeviceCoreMetadataProbe {
             return .failure(
                 DeviceAgentFailure(
                     code: .agentUnavailable,
-                    message: "Bundled native device-core POC failed to enumerate devices: \(failure.message)"
+                    message: "Bundled native device-core failed to enumerate devices: \(failure.message)"
                 )
             )
         }
@@ -1950,17 +1860,10 @@ private struct ToolchainProbe {
         let detail: String
     }
 
-    let xcodeSelect: CheckResult
-    let xcodebuild: CheckResult
-
     let nativeDeviceCore: CheckResult
 
     var availabilityBlockers: [DeviceAgentAssessmentBlockerCode] {
         var blockers: [DeviceAgentAssessmentBlockerCode] = []
-        if xcodeSelect.status != .available || xcodebuild.status != .available {
-            blockers.append(.xcodeToolchainMissing)
-        }
-
         if nativeDeviceCore.status != .available {
             blockers.append(.bundledDeviceCoreMissing)
         }
@@ -1969,47 +1872,14 @@ private struct ToolchainProbe {
 
     var events: [DeviceAgentDiagnosticEvent] {
         [
-            diagnosticEvent(prefix: "xcode-select", result: xcodeSelect),
-            diagnosticEvent(prefix: "xcodebuild", result: xcodebuild),
             diagnosticEvent(prefix: "native-device-core", result: nativeDeviceCore)
         ]
     }
 
     static func run() -> ToolchainProbe {
         ToolchainProbe(
-            xcodeSelect: probeXcodeSelect(),
-            xcodebuild: probeXcodebuild(),
             nativeDeviceCore: probeNativeDeviceCore()
         )
-    }
-
-    private static func probeXcodeSelect() -> CheckResult {
-        switch runCaptured(executable: "/usr/bin/xcode-select", arguments: ["-p"]) {
-        case .success(let output):
-            let path = output.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !path.isEmpty else {
-                return CheckResult(status: .broken, detail: "xcode-select returned an empty developer directory.")
-            }
-            if path == "/Library/Developer/CommandLineTools" {
-                return CheckResult(status: .missing, detail: "xcode-select points at Command Line Tools only (\(path)).")
-            }
-            return CheckResult(status: .available, detail: "xcode-select resolved full Xcode developer dir at \(path).")
-        case .failure(let failure):
-            return CheckResult(status: .missing, detail: failure.message)
-        }
-    }
-
-    private static func probeXcodebuild() -> CheckResult {
-        switch runCaptured(executable: "/usr/bin/xcrun", arguments: ["xcodebuild", "-version"]) {
-        case .success(let output):
-            let version = output
-                .split(separator: "\n")
-                .first
-                .map(String.init) ?? "xcodebuild available"
-            return CheckResult(status: .available, detail: version)
-        case .failure(let failure):
-            return CheckResult(status: .missing, detail: failure.message)
-        }
     }
 
     private static func probeNativeDeviceCore() -> CheckResult {

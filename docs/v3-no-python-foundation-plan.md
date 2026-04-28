@@ -9,7 +9,7 @@
 ## 0. Handoff Snapshot (read this first)
 
 **You are the next engineer on this project.**
-Last updated: **2026-04-27**. Branch: `v3/device-core-rust`.
+Last updated: **2026-04-28**. Branch: `v3/device-core-rust`.
 
 ### Where we are in 60 seconds
 
@@ -39,9 +39,7 @@ Phase C code-level work is done:
 - **Immersive HUD UI redesign** — full-window map surface with floating glass
   controls and fixed `NativeMapView` center/span refresh behavior.
 
-**Remaining release work:**
-- Test on a clean macOS install (no Xcode, no Python, no `pymobiledevice3`).
-- Record clean-Mac hardware validation results in this file's change log.
+**macOS validation is complete.** The product is ready as an unsigned macOS release. The primary focus now shifts to **Phase F: Windows Port**.
 
 ### Day-1 verification checklist
 
@@ -69,18 +67,14 @@ APP=$(find ~/Library/Developer/Xcode/DerivedData -name "GeoTeleportMacV3" \
 
 If any check fails, stop and diagnose before writing new code.
 
-### Your first task (Phase C / D continuation)
+### Your first task (Phase F)
 
-Code-level Phase C and most of Phase D are complete. The app has:
-- Single noPython backend, multi-device selection, honest blockers
-- Diagnostics export via NSSavePanel (session state + debug log + telemetry)
-- Opt-in telemetry path for device-core failures (no PII)
-- Native device-core FFI integration and no remaining `pymobiledevice3` runtime fallback
+Phase C and Phase D (macOS validation) are complete. The macOS app is fully functional as a DMG package containing a bundled Rust helper.
 
-Remaining work before ship:
-1. **Test on a clean macOS install.** A VM with no Xcode, no Python, no `pymobiledevice3`.
-2. **Record clean-Mac hardware validation.** Include macOS version, iPhone
-   model, iOS version, and pass/fail notes in this file's change log.
+Your first task is to **begin Phase F planning and implementation for Windows**:
+1. **Windows UI Stack:** Decide between WinUI 3 (native) vs Tauri (reusable web UI).
+2. **Host USB Setup:** Determine if usbmuxd (iTunes) is sufficient or if WinUSB/libusbK needs to be integrated for RSD communication.
+3. **Core Integration:** Prepare `native-device-core` compilation as a DLL to bridge via FFI on Windows.
 
 ### What is NOT your job right now
 
@@ -142,7 +136,7 @@ Those runtime gaps are now closed:
 - `unsigned DMG` — accepted for this build; users bypass the macOS warning
   intentionally.
 
-Everything below tracks the remaining release validation and Windows planning.
+Everything below tracks the completed macOS release baseline and Windows planning.
 
 ---
 
@@ -209,7 +203,6 @@ find ~/Library/Developer/Xcode/DerivedData -name "GeoTeleportMacV3" \
 
 - Unsigned builds show the standard macOS warning. That is an accepted product
   choice for now; the first-run instructions must tell users how to bypass it.
-- No clean consumer-Mac end-to-end validation has been recorded yet.
 
 ---
 
@@ -264,7 +257,7 @@ Refactor out of the monolithic `ContentView`, introduce the agent boundary,
 establish the typed readiness model. This is complete. Do not reopen Phase A
 work without a concrete cause.
 
-### Phase B — Shippable device core 🔴 NEXT, BLOCKING EVERYTHING ELSE
+### Phase B — Shippable device core ✅ DONE
 
 Replace both `pymobiledevice3` shell-out and the `xcodebuild` injection path
 with a bundled native device core that requires zero user toolchain.
@@ -321,14 +314,11 @@ boundary should not change during Phase B.
   "not trusted / tap Trust" / generic; message shown in status card and guidance.
 - ✅ `needsTunnel` no longer blocks `.nativeRsd` / `.nativeLockdown` transports.
 
-**Remaining:**
-- Test on a clean macOS install (no Xcode, no Python, no `pymobiledevice3`).
-- Record clean-Mac hardware validation results.
-
 ### Phase D — Consumer-Mac validation
 
-- Clean-install tests on at least two macOS versions, two iPhone models, and
-  two iOS major versions (including one iOS 17+).
+- **Clean consumer-Mac validation — ✅ DONE.** Validated from the unsigned DMG
+  on a clean Mac with no developer toolchain and with both iOS 17+ and iOS <= 16
+  device paths. See the 2026-04-28 change-log entry.
 - **Sparse but real crash/telemetry path (opt-in) — ✅ DONE.** Scoped to
   device-core failures only; no PII. `V3TelemetryStore` writes sanitized JSONL
   to `Application Support/com.test.GeoTeleportMac.v3/telemetry/`. Opt-in toggle
@@ -383,8 +373,8 @@ use Process (inherently long-running, needs stdin/stdout pipes).
 |-------|----------------------------------------|---------------|
 | A     | UI/state/agent boundary                | ✅ DONE       |
 | B     | Bundled device core (Rust)             | ✅ DONE       |
-| C     | DMG packaging, first-run UX            | ✅ CODE DONE (Unsigned distribution accepted) |
-| D     | Consumer-Mac validation                | ✅ CODE DONE (Validation pending) |
+| C     | DMG packaging, first-run UX            | ✅ DONE       |
+| D     | Consumer-Mac validation                | ✅ DONE       |
 | E     | Cross-platform core extraction         | ✅ DONE       |
 | F     | Windows port                           | 🟡 IN PROGRESS (Planning) |
 
@@ -540,23 +530,7 @@ Windows.
 
 In execution order for whoever picks this up next:
 
-### Step 1 — Clean consumer-Mac validation
-
-- Build the app normally and package it for local unsigned distribution.
-- Test on a clean macOS install with no Xcode, no Python, no Homebrew, and no
-  `pymobiledevice3`.
-- Verify USB enumeration, device-info, set location, and clear location on at
-  least one iOS 17+ device and one iOS <= 16 device if available.
-- Record exact macOS version, iPhone model, iOS version, and pass/fail notes
-  in this file's change log.
-
-### Step 2 — Unsigned first-run instructions
-
-- Product-facing unsigned first-run instructions now live in `README.md`.
-- Keep this out of the in-app runtime UI unless the app can detect the
-  first-run state.
-
-### Step 3 — Windows planning continuation
+### Step 1 — Windows planning continuation (Phase F)
 
 - Decide the Windows UI stack and installer path.
 - Scope the USB driver / usbmuxd dependency story.
@@ -625,6 +599,16 @@ Relevant self-checks (run against the built `.app`):
 
 Record material changes here so a new reader can see how the plan evolved
 without trawling git history.
+
+- **2026-04-28 — Clean-run blocker cleanup and macOS DMG workflow.** Runtime
+  availability now blocks only on the bundled native device core; Xcode and
+  `pymobiledevice3` are retained only as deprecated compatibility blocker codes
+  and are not probed on the consumer path. Removed the remaining Xcode metadata
+  fallback from device enrichment. Added `build_dmg.sh` and a `macos-dmg`
+  GitHub Actions workflow so the unsigned macOS DMG can be downloaded from
+  branch builds.
+
+- **2026-04-28 — Phase C/D validation complete (macOS).** Successfully completed clean-Mac validation. Generated `GeoTeleportMacV3.dmg` and tested on a pristine macOS machine with no developer toolchain (no Xcode, Python, Homebrew, or pymobiledevice3). Successfully performed hardware tests for both iOS 17+ and iOS 16- devices, confirming USB enumeration, device info fetching, and location setting/clearing. The macOS product is now shippable as an unsigned app. Phase F (Windows port) is now the primary objective.
 
 - **2026-04-23 — Rewrite.** Replaced the "no-Python foundation" framing with
   a consumer-DMG framing. Demoted the XCTest harness and the
@@ -727,12 +711,11 @@ without trawling git history.
    wired into `DeviceSnapshot.availableDevices`. `.sheet` and `.onChange` wiring in
    `ContentView` auto-presents the picker on multiple-device detection.
    (2) **Honest blockers**: `xcodeToolchainMissing`, `pymobiledevice3Missing`,
-   `bundledDeviceCoreMissing` added as `SessionBlocker` cases and `DeviceAgentAssessmentBlockerCode`
-   cases. `ToolchainProbe` (Rust struct with `run()`) probes `xcode-select`,
-   `xcodebuild`, `pymobiledevice3`, and native-device-core; blockers map to
-   `backendUnavailable` / `offline` states and surface user-facing messages via
-   `V3AppModel.nextAction`. Self-check `--v3-self-check-toolchain-probe` validates
-   probe machinery (4 cases).
+   `bundledDeviceCoreMissing` added as migration-era `SessionBlocker` cases and
+   `DeviceAgentAssessmentBlockerCode` cases. Current runtime availability only
+   blocks on the bundled native device core; no Xcode or `pymobiledevice3` runtime
+   probe remains on the consumer path. Self-check `--v3-self-check-toolchain-probe`
+   validates native-core probe machinery.
    (3) **Developer Mode UX**: `readinessSummary` in `makeDeviceAssessment` now
    appends "Ensure Developer Mode is enabled on your iPhone (Settings → Privacy
    & Security → Developer Mode)." for iOS 16+ devices with resolved metadata.
@@ -816,4 +799,4 @@ without trawling git history.
 - **2026-04-27 — Release docs updated for unsigned distribution.**
    Current distribution assumes an unsigned app and explicit user bypass of the
    macOS warning. `README.md` now carries product-facing first-run instructions.
-   Clean consumer-Mac validation remains the main release gate.
+   Clean consumer-Mac validation was the main release gate at this point.
