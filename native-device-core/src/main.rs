@@ -12,7 +12,9 @@ use idevice::usbmuxd::UsbmuxdAddr;
 use idevice::IdeviceService;
 use idevice::ReadWrite;
 use std::env;
+use std::fmt;
 use std::process::ExitCode;
+use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 #[tokio::main]
@@ -137,62 +139,21 @@ async fn cmd_ios17_daemon(udid: Option<&str>) -> ExitCode {
 }
 
 async fn ios17_location_daemon(udid: &str) -> ExitCode {
-    let device = match find_usb_device(udid).await {
-        Ok(d) => d,
+    let (mut _adapter_handle, mut remote_server) = match connect_ios17_location_stack(udid).await {
+        Ok(stack) => stack,
         Err(e) => {
             eprintln!("{e}");
             return ExitCode::from(1);
         }
     };
 
-    let provider = device.to_provider(UsbmuxdAddr::default(), "geoteleport");
-    let proxy = match CoreDeviceProxy::connect(&provider).await {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("ios17-location-daemon: CoreDeviceProxy connection failed: {e}");
-            return ExitCode::from(1);
-        }
-    };
-    let rsd_port = proxy.tunnel_info().server_rsd_port;
-
-    let adapter = match proxy.create_software_tunnel() {
-        Ok(a) => a,
-        Err(e) => {
-            eprintln!("ios17-location-daemon: software tunnel creation failed: {e}");
-            return ExitCode::from(1);
-        }
-    };
-    let mut adapter_handle = adapter.to_async_handle();
-
-    let rsd_stream = match adapter_handle.connect(rsd_port).await {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("ios17-location-daemon: RSD port {rsd_port} connection failed: {e}");
-            return ExitCode::from(1);
-        }
-    };
-
-    let mut rsd = match RsdHandshake::new(rsd_stream).await {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("ios17-location-daemon: RSD handshake failed: {e}");
-            return ExitCode::from(1);
-        }
-    };
-
-    let mut remote_server: RemoteServerClient<Box<dyn ReadWrite>> =
-        match rsd.connect(&mut adapter_handle).await {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("ios17-location-daemon: DTX service connection failed: {e}");
-                return ExitCode::from(1);
-            }
-        };
-
     let mut loc_client = match LocationSimulationClient::new(&mut remote_server).await {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("ios17-location-daemon: location simulation channel failed: {e}");
+            eprintln!(
+                "ios17-location-daemon: location simulation channel failed: {}",
+                format_error(e)
+            );
             return ExitCode::from(1);
         }
     };
@@ -218,7 +179,7 @@ async fn ios17_location_daemon(udid: &str) -> ExitCode {
                     Ok(()) => println!(r#"{{"status":"ok"}}"#),
                     Err(e) => println!(
                         r#"{{"status":"error","error":{}}}"#,
-                        serde_json::to_string(&e.to_string()).unwrap()
+                        serde_json::to_string(&format_error(e)).unwrap()
                     ),
                 },
                 _ => println!(r#"{{"status":"error","error":"invalid coordinates"}}"#),
@@ -227,7 +188,7 @@ async fn ios17_location_daemon(udid: &str) -> ExitCode {
                 Ok(()) => println!(r#"{{"status":"ok"}}"#),
                 Err(e) => println!(
                     r#"{{"status":"error","error":{}}}"#,
-                    serde_json::to_string(&e.to_string()).unwrap()
+                    serde_json::to_string(&format_error(e)).unwrap()
                 ),
             },
             _ => println!(r#"{{"status":"error","error":"unknown command"}}"#),
@@ -235,4 +196,103 @@ async fn ios17_location_daemon(udid: &str) -> ExitCode {
     }
 
     ExitCode::SUCCESS
+}
+
+async fn connect_ios17_location_stack(
+    udid: &str,
+) -> Result<
+    (
+        idevice::tcp::handle::AdapterHandle,
+        RemoteServerClient<Box<dyn ReadWrite>>,
+    ),
+    String,
+> {
+    const ATTEMPTS: usize = 3;
+    let mut last_error = None;
+
+    for attempt in 1..=ATTEMPTS {
+        match connect_ios17_location_stack_once(udid).await {
+            Ok(stack) => return Ok(stack),
+            Err(e) => {
+                eprintln!(
+                    "ios17-location-daemon: startup attempt {attempt}/{ATTEMPTS} failed: {e}"
+                );
+                last_error = Some(e);
+                if attempt < ATTEMPTS {
+                    tokio::time::sleep(Duration::from_millis(750 * attempt as u64)).await;
+                }
+            }
+        }
+    }
+
+    Err(last_error.unwrap_or_else(|| {
+        "ios17-location-daemon: startup failed before any attempt completed".to_string()
+    }))
+}
+
+async fn connect_ios17_location_stack_once(
+    udid: &str,
+) -> Result<
+    (
+        idevice::tcp::handle::AdapterHandle,
+        RemoteServerClient<Box<dyn ReadWrite>>,
+    ),
+    String,
+> {
+    let device = find_usb_device(udid).await?;
+    let provider = device.to_provider(UsbmuxdAddr::default(), "geoteleport");
+    let proxy = match CoreDeviceProxy::connect(&provider).await {
+        Ok(proxy) => proxy,
+        Err(e) => return Err(format!(
+            "ios17-location-daemon: CoreDeviceProxy connection failed: {}",
+            format_error(e)
+        )),
+    };
+    let rsd_port = proxy.tunnel_info().server_rsd_port;
+
+    let adapter = match proxy.create_software_tunnel() {
+        Ok(adapter) => adapter,
+        Err(e) => return Err(format!(
+            "ios17-location-daemon: software tunnel creation failed: {}",
+            format_error(e)
+        )),
+    };
+    let mut adapter_handle = adapter.to_async_handle();
+
+    let rsd_stream = match adapter_handle.connect(rsd_port).await {
+        Ok(stream) => stream,
+        Err(e) => return Err(format!(
+            "ios17-location-daemon: RSD port {rsd_port} connection failed: {}",
+            format_error(e)
+        )),
+    };
+
+    let mut rsd = match RsdHandshake::new(rsd_stream).await {
+        Ok(rsd) => rsd,
+        Err(e) => return Err(format!(
+            "ios17-location-daemon: RSD handshake failed: {}",
+            format_error(e)
+        )),
+    };
+
+    let remote_server: RemoteServerClient<Box<dyn ReadWrite>> =
+        match rsd.connect(&mut adapter_handle).await {
+            Ok(server) => server,
+            Err(e) => return Err(format!(
+                "ios17-location-daemon: DTX service connection failed: {}",
+                format_error(e)
+            )),
+        };
+
+    Ok((adapter_handle, remote_server))
+}
+
+fn format_error(error: impl fmt::Display + fmt::Debug) -> String {
+    let display = error.to_string();
+    let debug = format!("{error:?}");
+    if debug == display {
+        display
+    } else {
+        format!("{display} ({debug})")
+    }
 }

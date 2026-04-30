@@ -616,6 +616,15 @@ without trawling git history.
   native `device-info <udid>` lookup and routes iOS 17+ / iOS 26 set-clear
   commands through `ios17-location-daemon`. Direct native lockdown injection is
   allowed only after a concrete iOS major version below 17 is known.
+- **2026-04-30 — iOS 26 daemon startup hardening.** The iOS 26 path now keeps
+  `ios17-location-daemon` stderr and exit status visible in Swift diagnostics
+  instead of collapsing early process exit into a generic readiness timeout.
+  Rust daemon startup retries the CoreDeviceProxy + software tunnel + RSD +
+  DVT LocationSimulation stack three times before failing, and error strings now
+  include the underlying `Socket(Os { ... })` detail that `idevice` hides behind
+  `device socket io failed`. Hardware validation still requires retrying on a
+  connected iOS 26 device; the expected success path is `nativeRsd -> READY ->
+  set/clear OK`, and any remaining failure should now name the failing layer.
 
 - **2026-04-23 — Rewrite.** Replaced the "no-Python foundation" framing with
   a consumer-DMG framing. Demoted the XCTest harness and the

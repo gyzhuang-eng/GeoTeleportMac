@@ -3,6 +3,7 @@ use idevice::services::simulate_location::LocationSimulationService;
 use idevice::usbmuxd::{Connection, UsbmuxdAddr, UsbmuxdConnection, UsbmuxdDevice};
 use idevice::IdeviceService;
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 // ── Models ──────────────────────────────────────────────────────────
 
@@ -50,7 +51,7 @@ pub async fn enumerate_ios_devices_core() -> Result<String, String> {
         Err(error) if is_empty_enumeration_error(&error.to_string()) => {
             return Ok("[]".to_string());
         }
-        Err(error) => return Err(format!("failed to connect to usbmuxd: {error}")),
+        Err(error) => return Err(format!("failed to connect to usbmuxd: {}", format_error(error))),
     };
 
     let devices = match connection.get_devices().await {
@@ -58,7 +59,7 @@ pub async fn enumerate_ios_devices_core() -> Result<String, String> {
         Err(error) if is_empty_enumeration_error(&error.to_string()) => {
             return Ok("[]".to_string());
         }
-        Err(error) => return Err(format!("failed to enumerate iOS devices: {error}")),
+        Err(error) => return Err(format!("failed to enumerate iOS devices: {}", format_error(error))),
     };
 
     let usb_devices: Vec<DeviceEntry> = devices
@@ -82,7 +83,7 @@ pub async fn device_info_core(udid: &str) -> Result<String, String> {
 
     let connection = UsbmuxdConnection::default()
         .await
-        .map_err(|e| format!("failed to connect to usbmuxd: {e}"))?;
+        .map_err(|e| format!("failed to connect to usbmuxd: {}", format_error(e)))?;
 
     let idevice = connection
         .connect_to_device(
@@ -91,7 +92,7 @@ pub async fn device_info_core(udid: &str) -> Result<String, String> {
             "geoteleport",
         )
         .await
-        .map_err(|e| format!("failed to connect to lockdown service: {e}"))?;
+        .map_err(|e| format!("failed to connect to lockdown service: {}", format_error(e)))?;
 
     let mut lockdown = LockdownClient::new(idevice);
 
@@ -168,12 +169,12 @@ pub async fn clear_location_core(udid: &str) -> Result<String, String> {
 pub async fn find_usb_device(udid: &str) -> Result<UsbmuxdDevice, String> {
     let mut connection = UsbmuxdConnection::default()
         .await
-        .map_err(|e| format!("failed to connect to usbmuxd: {e}"))?;
+        .map_err(|e| format!("failed to connect to usbmuxd: {}", format_error(e)))?;
 
     let devices = connection
         .get_devices()
         .await
-        .map_err(|e| format!("failed to enumerate iOS devices: {e}"))?;
+        .map_err(|e| format!("failed to enumerate iOS devices: {}", format_error(e)))?;
 
     devices
         .into_iter()
@@ -202,4 +203,14 @@ pub async fn lockdown_string(lockdown: &mut LockdownClient, key: &str) -> Option
 
 fn is_empty_enumeration_error(message: &str) -> bool {
     message.contains("device socket io failed") || message.contains("Connection refused")
+}
+
+fn format_error(error: impl fmt::Display + fmt::Debug) -> String {
+    let display = error.to_string();
+    let debug = format!("{error:?}");
+    if debug == display {
+        display
+    } else {
+        format!("{display} ({debug})")
+    }
 }

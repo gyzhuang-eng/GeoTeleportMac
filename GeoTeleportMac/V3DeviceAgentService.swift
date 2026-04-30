@@ -2069,17 +2069,21 @@ final class NativeDeviceCoreIos17LocationController {
         private let lock = NSLock()
         private var lineQueue: [String] = []
         private let lineSemaphore = DispatchSemaphore(value: 0)
+        private let stderrLock = NSLock()
+        private var stderrText = ""
 
         init(
             udid: String,
             process: Process,
             stdinHandle: FileHandle,
-            stdoutHandle: FileHandle
+            stdoutHandle: FileHandle,
+            stderrHandle: FileHandle
         ) {
             self.udid = udid
             self.process = process
             self.stdinHandle = stdinHandle
             startReaderThread(handle: stdoutHandle)
+            startStderrReaderThread(handle: stderrHandle)
         }
 
         private func startReaderThread(handle: FileHandle) {
@@ -2107,6 +2111,22 @@ final class NativeDeviceCoreIos17LocationController {
             t.start()
         }
 
+        private func startStderrReaderThread(handle: FileHandle) {
+            let t = Thread {
+                while true {
+                    let data = handle.availableData
+                    if data.isEmpty { break }
+                    guard let chunk = String(data: data, encoding: .utf8) else { continue }
+                    self.stderrLock.lock()
+                    self.stderrText += chunk
+                    self.stderrLock.unlock()
+                }
+            }
+            t.qualityOfService = .utility
+            t.name = "ios17-location-daemon.stderr-reader"
+            t.start()
+        }
+
         func nextLine(timeout: TimeInterval) -> String? {
             guard lineSemaphore.wait(timeout: .now() + timeout) == .success else { return nil }
             lock.lock()
@@ -2117,6 +2137,15 @@ final class NativeDeviceCoreIos17LocationController {
         func sendLine(_ text: String) {
             let data = (text + "\n").data(using: .utf8)!
             stdinHandle.write(data)
+        }
+
+        func stderrSummary(maxLength: Int = 2_000) -> String {
+            stderrLock.lock()
+            let text = stderrText.trimmingCharacters(in: .whitespacesAndNewlines)
+            stderrLock.unlock()
+            guard !text.isEmpty else { return "" }
+            if text.count <= maxLength { return text }
+            return String(text.suffix(maxLength))
         }
     }
 
@@ -2164,6 +2193,8 @@ final class NativeDeviceCoreIos17LocationController {
 
     // MARK: - Private helpers
 
+    private let startupTimeout: TimeInterval = 45
+
     private func ensureSession(udid: String) -> Result<Void, DeviceAgentFailure> {
         if let s = session, s.udid == udid, s.process.isRunning {
             return .success(())
@@ -2188,11 +2219,12 @@ final class NativeDeviceCoreIos17LocationController {
         let process = Process()
         let stdinPipe = Pipe()
         let stdoutPipe = Pipe()
+        let stderrPipe = Pipe()
         process.executableURL = URL(fileURLWithPath: binaryPath)
         process.arguments = ["ios17-location-daemon", udid]
         process.standardInput = stdinPipe
         process.standardOutput = stdoutPipe
-        process.standardError = FileHandle.nullDevice
+        process.standardError = stderrPipe
 
         do {
             try process.run()
@@ -2212,35 +2244,70 @@ final class NativeDeviceCoreIos17LocationController {
             udid: udid,
             process: process,
             stdinHandle: stdinPipe.fileHandleForWriting,
-            stdoutHandle: stdoutPipe.fileHandleForReading
+            stdoutHandle: stdoutPipe.fileHandleForReading,
+            stderrHandle: stderrPipe.fileHandleForReading
         )
         session = s
 
-        guard let first = s.nextLine(timeout: 15) else {
+        guard let first = s.nextLine(timeout: startupTimeout) else {
+            let detail = startupFailureDetail(for: s)
             invalidate()
             V3TelemetryStore.shared.record(
                 type: .ios17DaemonTimeout,
-                summary: "ios17-location-daemon: did not become ready within 15 s",
-                errorMessage: "Check USB connection and pairing"
+                summary: detail.summary,
+                errorMessage: detail.message
             )
             return .failure(DeviceAgentFailure(
                 code: .agentUnavailable,
-                message: "ios17-location-daemon: did not become ready within 15 s for \(udid). Check USB connection and pairing."
+                message: "ios17-location-daemon: \(detail.message) for \(udid)."
             ))
         }
         guard first == "READY" else {
+            let stderr = s.stderrSummary()
+            let message = stderr.isEmpty
+                ? "unexpected startup output: \(first)"
+                : "unexpected startup output: \(first). stderr: \(stderr)"
             invalidate()
             V3TelemetryStore.shared.record(
                 type: .ios17DaemonUnexpectedOutput,
                 summary: "ios17-location-daemon: unexpected startup output",
-                errorMessage: first
+                errorMessage: message
             )
             return .failure(DeviceAgentFailure(
                 code: .agentUnavailable,
-                message: "ios17-location-daemon: unexpected startup output for \(udid): \(first)"
+                message: "ios17-location-daemon: \(message) for \(udid)."
             ))
         }
         return .success(())
+    }
+
+    private func startupFailureDetail(for session: Session) -> (summary: String, message: String) {
+        let stderr = session.stderrSummary()
+        if !session.process.isRunning {
+            let exitCode = session.process.terminationStatus
+            let base = "exited before READY with status \(exitCode)"
+            if stderr.isEmpty {
+                return (
+                    "ios17-location-daemon: \(base)",
+                    "\(base); check USB connection, pairing, and Developer Mode"
+                )
+            }
+            return (
+                "ios17-location-daemon: \(base)",
+                "\(base): \(stderr)"
+            )
+        }
+
+        if stderr.isEmpty {
+            return (
+                "ios17-location-daemon: did not become ready within \(Int(startupTimeout)) s",
+                "did not become ready within \(Int(startupTimeout)) s; check USB connection, pairing, and Developer Mode"
+            )
+        }
+        return (
+            "ios17-location-daemon: did not become ready within \(Int(startupTimeout)) s",
+            "did not become ready within \(Int(startupTimeout)) s; stderr: \(stderr)"
+        )
     }
 
     private func interpretResponse(
