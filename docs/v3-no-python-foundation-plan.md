@@ -9,7 +9,7 @@
 ## 0. Handoff Snapshot (read this first)
 
 **You are the next engineer on this project.**
-Last updated: **2026-04-28**. Branch: `v3/device-core-rust`.
+Last updated: **2026-04-30**. Branch: `v3/device-core-rust-macos`.
 
 ### Where we are in 60 seconds
 
@@ -45,7 +45,7 @@ Phase C code-level work is done:
 
 ```bash
 # 1. Correct branch
-git rev-parse --abbrev-ref HEAD          # expect: v3/device-core-rust
+git rev-parse --abbrev-ref HEAD          # expect: v3/device-core-rust-macos
 
 # 2. Rust binary builds
 cd native-device-core && cargo build && cd ..
@@ -610,6 +610,12 @@ without trawling git history.
   on standard GitHub macOS runners instead of requiring the local Xcode 26 SDK.
 
 - **2026-04-28 — Phase C/D validation complete (macOS).** Successfully completed clean-Mac validation. Generated `GeoTeleportMacV3.dmg` and tested on a pristine macOS machine with no developer toolchain (no Xcode, Python, Homebrew, or pymobiledevice3). Successfully performed hardware tests for both iOS 17+ and iOS 16- devices, confirming USB enumeration, device info fetching, and location setting/clearing. The macOS product is now shippable as an unsigned app. Phase F (Windows port) is now the primary objective.
+- **2026-04-30 — iOS 26 routing hardening.** Fixed the practical iOS 26 location
+  path by treating unknown iOS versions as unresolved instead of iOS <= 16.
+  When enumeration does not include `ProductVersion`, the app now performs a
+  native `device-info <udid>` lookup and routes iOS 17+ / iOS 26 set-clear
+  commands through `ios17-location-daemon`. Direct native lockdown injection is
+  allowed only after a concrete iOS major version below 17 is known.
 
 - **2026-04-23 — Rewrite.** Replaced the "no-Python foundation" framing with
   a consumer-DMG framing. Demoted the XCTest harness and the

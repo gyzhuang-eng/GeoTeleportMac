@@ -334,6 +334,25 @@ struct StubDeviceAgentService: DeviceAgentServicing {
             detail: "state=\(ios17Probe.transportState.rawValue)"
         ))
 
+        let unknownVersionSnapshot = DeviceSnapshot(
+            isConnected: true,
+            connectionSummary: "SELF-CHECK",
+            iosVersion: nil,
+            deviceName: "Self Check iPhone",
+            deviceIdentifier: "self-check-device-id",
+            serialSuffix: "0000",
+            vendorID: "0x05ac",
+            productID: "0x12a8",
+            probeSource: "self-check",
+            matchedDeviceCount: 1
+        )
+        let unknownVersionProbe = adapter.probeTransport(snapshot: unknownVersionSnapshot, tunnelEndpointResult: nil)
+        checks.append(Check(
+            name: "unknown-ios-version-with-udid-does-not-return-native-lockdown",
+            passed: unknownVersionProbe.transportState == .unavailable,
+            detail: "state=\(unknownVersionProbe.transportState.rawValue)"
+        ))
+
         let noUDIDSnapshot = DeviceSnapshot(
             isConnected: true,
             connectionSummary: "SELF-CHECK",
@@ -709,7 +728,7 @@ private struct SystemUSBProbe {
 
         switch NativeDeviceCoreMetadataProbe.fetchAttachedMobileDevices() {
         case .success(let devices):
-            let allEntries = devices.map {
+            let baseEntries = devices.map {
                 DevicePickerEntry(udid: $0.identifier, name: $0.name, iosVersion: $0.iosVersion)
             }
 
@@ -738,35 +757,74 @@ private struct SystemUSBProbe {
                     matchedDeviceCount: max(probe.matchedDeviceCount, devices.count),
                     source: probe.source,
                     events: probe.events + [DeviceAgentDiagnosticEvent(level: .warning, message: message)],
-                    allDevices: allEntries
+                    allDevices: baseEntries
+                )
+            }
+
+            var resolvedName = match.name
+            var resolvedIOSVersion = match.iosVersion
+            var resolutionEvents: [DeviceAgentDiagnosticEvent] = []
+            if resolvedIOSVersion == nil, !match.identifier.isEmpty {
+                switch NativeDeviceCoreMetadataProbe.fetchDeviceInfo(udid: match.identifier) {
+                case .success(let info):
+                    if let deviceName = info.deviceName?.trimmingCharacters(in: .whitespacesAndNewlines),
+                       !deviceName.isEmpty {
+                        resolvedName = deviceName
+                    }
+                    if let productVersion = info.productVersion?.trimmingCharacters(in: .whitespacesAndNewlines),
+                       !productVersion.isEmpty {
+                        resolvedIOSVersion = productVersion
+                        resolutionEvents.append(DeviceAgentDiagnosticEvent(
+                            level: .info,
+                            message: "Native device-core resolved lockdown iOS \(productVersion) for \(resolvedName)"
+                        ))
+                    } else {
+                        resolutionEvents.append(DeviceAgentDiagnosticEvent(
+                            level: .warning,
+                            message: "Native device-core device-info matched \(resolvedName), but ProductVersion was missing"
+                        ))
+                    }
+                case .failure(let failure):
+                    resolutionEvents.append(DeviceAgentDiagnosticEvent(
+                        level: .warning,
+                        message: "Native device-core could not resolve iOS version from device-info: \(failure.message)"
+                    ))
+                }
+            }
+
+            let allEntries = devices.map {
+                DevicePickerEntry(
+                    udid: $0.identifier,
+                    name: $0.identifier == match.identifier ? resolvedName : $0.name,
+                    iosVersion: $0.identifier == match.identifier ? resolvedIOSVersion : $0.iosVersion
                 )
             }
 
             let event: DeviceAgentDiagnosticEvent
-            if let iosVersion = match.iosVersion {
+            if let iosVersion = resolvedIOSVersion {
                 event = DeviceAgentDiagnosticEvent(
                     level: .info,
-                    message: "Native device-core enriched metadata with iOS \(iosVersion) from \(match.name)"
+                    message: "Native device-core enriched metadata with iOS \(iosVersion) from \(resolvedName)"
                 )
             } else {
                 event = DeviceAgentDiagnosticEvent(
                     level: .warning,
-                    message: "Native device-core matched \(match.name), but it did not provide an iOS version"
+                    message: "Native device-core matched \(resolvedName), but it did not provide an iOS version"
                 )
             }
 
             return SystemUSBProbe(
                 isConnected: probe.isConnected,
-                displayName: probe.displayName ?? match.name,
+                displayName: probe.displayName ?? resolvedName,
                 deviceIdentifier: match.identifier.isEmpty ? probe.deviceIdentifier : match.identifier,
                 serialSuffix: probe.serialSuffix,
                 speed: probe.speed,
                 vendorID: probe.vendorID,
                 productID: probe.productID,
-                iosVersion: match.iosVersion ?? probe.iosVersion,
+                iosVersion: resolvedIOSVersion ?? probe.iosVersion,
                 matchedDeviceCount: max(probe.matchedDeviceCount, devices.count),
                 source: probe.source,
-                events: probe.events + [event],
+                events: probe.events + [event] + resolutionEvents,
                 allDevices: allEntries
             )
         case .failure(let failure):
@@ -820,7 +878,7 @@ private struct USBMobileAppleDevice {
     let productID: String?
 }
 
-private struct AttachedAppleDevice {
+fileprivate struct AttachedAppleDevice {
     let name: String
     let identifier: String
     let operatingSystemVersion: String?
@@ -838,7 +896,21 @@ private struct AttachedAppleDevice {
     }
 }
 
-private enum NativeDeviceMetadataParser {
+struct NativeDeviceCoreResolvedDeviceInfo {
+    let udid: String
+    let deviceName: String?
+    let productVersion: String?
+    let uniqueDeviceID: String?
+    let deviceClass: String?
+    let productType: String?
+
+    var iosMajorVersion: Int? {
+        guard let productVersion else { return nil }
+        return Int(productVersion.split(separator: ".").first ?? "")
+    }
+}
+
+fileprivate enum NativeDeviceMetadataParser {
     static func match(
         for probe: SystemUSBProbe,
         in devices: [AttachedAppleDevice]
@@ -909,7 +981,7 @@ private enum NativeDeviceMetadataParser {
     }
 }
 
-private enum NativeDeviceCoreMetadataProbe {
+enum NativeDeviceCoreMetadataProbe {
     static var isBinaryAvailable: Bool {
         resolveBinaryPath() != nil
     }
@@ -921,7 +993,7 @@ private enum NativeDeviceCoreMetadataProbe {
         return "Bundled native device-core binary is not built yet."
     }
 
-    static func fetchAttachedMobileDevices() -> Result<[AttachedAppleDevice], DeviceAgentFailure> {
+    fileprivate static func fetchAttachedMobileDevices() -> Result<[AttachedAppleDevice], DeviceAgentFailure> {
         if NativeDeviceCoreFFI.isAvailable {
             do {
                 let text = try NativeDeviceCoreFFI.enumerateDevices()
@@ -963,6 +1035,60 @@ private enum NativeDeviceCoreMetadataProbe {
                 )
             )
         }
+    }
+
+    static func fetchDeviceInfo(udid: String) -> Result<NativeDeviceCoreResolvedDeviceInfo, DeviceAgentFailure> {
+        if NativeDeviceCoreFFI.isAvailable {
+            do {
+                let text = try NativeDeviceCoreFFI.deviceInfo(udid: udid)
+                return parseDeviceInfo(text, udid: udid)
+            } catch {
+                return .failure(DeviceAgentFailure(
+                    code: .agentUnavailable,
+                    message: "Bundled native device-core FFI failed to read device info: \(error.localizedDescription)"
+                ))
+            }
+        }
+
+        guard let binaryPath = resolveBinaryPath() else {
+            return .failure(DeviceAgentFailure(
+                code: .agentUnavailable,
+                message: "Bundled native device-core binary is not built yet."
+            ))
+        }
+
+        switch runCaptured(executable: binaryPath, arguments: ["device-info", udid]) {
+        case .success(let text):
+            return parseDeviceInfo(text, udid: udid)
+        case .failure(let failure):
+            return .failure(DeviceAgentFailure(
+                code: .agentUnavailable,
+                message: "Bundled native device-core failed to read device info: \(failure.message)"
+            ))
+        }
+    }
+
+    private static func parseDeviceInfo(
+        _ text: String,
+        udid: String
+    ) -> Result<NativeDeviceCoreResolvedDeviceInfo, DeviceAgentFailure> {
+        let payload = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let data = payload.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return .failure(DeviceAgentFailure(
+                code: .agentUnavailable,
+                message: "Unable to parse native device-core device-info JSON output."
+            ))
+        }
+
+        return .success(NativeDeviceCoreResolvedDeviceInfo(
+            udid: (json["udid"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? udid,
+            deviceName: json["deviceName"] as? String,
+            productVersion: json["productVersion"] as? String,
+            uniqueDeviceID: json["uniqueDeviceID"] as? String,
+            deviceClass: json["deviceClass"] as? String,
+            productType: json["productType"] as? String
+        ))
     }
 
     static func resolveBinaryPath(filePath: String = #filePath) -> String? {
@@ -1170,6 +1296,13 @@ private struct NativeDeviceCoreInjectionTransportAdapter: InjectionTransportServ
             )
         }
 
+        guard let major = snapshot.iosMajorVersion else {
+            return unavailableProbe(
+                summary: "Native lockdown injection is blocked until the iOS version is resolved.",
+                nextAction: "Read device-info via native device-core first; iOS 17 and later must route through ios17-location-daemon."
+            )
+        }
+
         guard let udid = snapshot.deviceIdentifier, !udid.isEmpty else {
             return unavailableProbe(
                 summary: "Device UDID is not available for native lockdown injection.",
@@ -1183,7 +1316,7 @@ private struct NativeDeviceCoreInjectionTransportAdapter: InjectionTransportServ
             contract: DeviceAgentInjectionTransportContract(
                 contractID: "injection.transport.native-lockdown",
                 phase: .nativeLockdown,
-                summary: "Native lockdown injection transport is ready. Device UDID available, binary present, iOS ≤ 16 confirmed.",
+                summary: "Native lockdown injection transport is ready. Device UDID available, binary present, iOS \(major) confirmed.",
                 expectedInput: "Teleport request"
             ),
             sourceTunnelEndpointArtifactID: nil,
@@ -1222,6 +1355,12 @@ private struct NativeDeviceCoreInjectionTransportAdapter: InjectionTransportServ
             return .failure(DeviceAgentFailure(
                 code: .transportUnimplemented,
                 message: "iOS \(major) device: set-location must be routed through NativeDeviceCoreIos17LocationController in the main app process, not via the single-shot agent."
+            ))
+        }
+        guard snapshot.iosMajorVersion != nil else {
+            return .failure(DeviceAgentFailure(
+                code: .agentUnavailable,
+                message: "iOS version is unresolved; refusing direct native lockdown set-location until device-info provides ProductVersion."
             ))
         }
         if NativeDeviceCoreFFI.isAvailable {
@@ -1283,6 +1422,12 @@ private struct NativeDeviceCoreInjectionTransportAdapter: InjectionTransportServ
             return .failure(DeviceAgentFailure(
                 code: .transportUnimplemented,
                 message: "iOS \(major) device: clear-location must be routed through NativeDeviceCoreIos17LocationController in the main app process, not via the single-shot agent."
+            ))
+        }
+        guard snapshot.iosMajorVersion != nil else {
+            return .failure(DeviceAgentFailure(
+                code: .agentUnavailable,
+                message: "iOS version is unresolved; refusing direct native lockdown clear-location until device-info provides ProductVersion."
             ))
         }
         if NativeDeviceCoreFFI.isAvailable {

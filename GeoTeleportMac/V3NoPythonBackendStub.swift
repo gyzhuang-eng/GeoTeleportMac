@@ -27,10 +27,39 @@ private final class Ios17BackendState {
         let newMajor = snapshot.iosMajorVersion
         let udidChanged = newUdid != _udid
         _udid = newUdid
-        _major = newMajor
+        if udidChanged {
+            _major = newMajor
+        } else if let newMajor {
+            _major = newMajor
+        }
         lock.unlock()
         if udidChanged {
             locationController.invalidate()
+        }
+    }
+
+    func ios17OrNewerUDIDIfNeeded() -> String? {
+        lock.lock()
+        let currentUdid = _udid
+        let currentMajor = _major
+        lock.unlock()
+
+        guard let udid = currentUdid, !udid.isEmpty else { return nil }
+        if let currentMajor {
+            return currentMajor >= 17 ? udid : nil
+        }
+
+        switch NativeDeviceCoreMetadataProbe.fetchDeviceInfo(udid: udid) {
+        case .success(let info):
+            guard let major = info.iosMajorVersion else { return nil }
+            lock.lock()
+            if _udid == udid {
+                _major = major
+            }
+            lock.unlock()
+            return major >= 17 ? udid : nil
+        case .failure:
+            return nil
         }
     }
 }
@@ -91,8 +120,7 @@ struct NoPythonBackendStub: DeviceBackend {
     }
 
     func setLocation(_ request: TeleportRequest) -> Result<LocationCommandExecution, BackendFailure> {
-        if let major = ios17State.iosMajor, major >= 17,
-           let udid = ios17State.udid, !udid.isEmpty {
+        if let udid = ios17State.ios17OrNewerUDIDIfNeeded() {
             return ios17LocationResult(
                 ios17State.locationController.setLocation(
                     udid: udid,
@@ -122,8 +150,7 @@ struct NoPythonBackendStub: DeviceBackend {
     }
 
     func clearLocation() -> Result<LocationCommandExecution, BackendFailure> {
-        if let major = ios17State.iosMajor, major >= 17,
-           let udid = ios17State.udid, !udid.isEmpty {
+        if let udid = ios17State.ios17OrNewerUDIDIfNeeded() {
             return ios17LocationResult(
                 ios17State.locationController.clearLocation(udid: udid)
             )
