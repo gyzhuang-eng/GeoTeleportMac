@@ -1,8 +1,8 @@
 mod core;
 
 use core::{
-    clear_location_core, device_info_core, enumerate_ios_devices_core, set_location_core,
-    CommandStatus, StatusResponse,
+    clear_location_core, developer_mode_status_core, device_info_core,
+    enumerate_ios_devices_core, set_location_core, CommandStatus, StatusResponse,
 };
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
@@ -52,6 +52,13 @@ pub extern "C" fn gte_device_info(udid: *const c_char) -> *mut c_char {
     let udid = from_c_str(udid);
     let rt = tokio::runtime::Runtime::new().unwrap();
     ffi_ok!(rt.block_on(device_info_core(&udid)))
+}
+
+#[no_mangle]
+pub extern "C" fn gte_developer_mode_status(udid: *const c_char) -> *mut c_char {
+    let udid = from_c_str(udid);
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    ffi_ok!(rt.block_on(developer_mode_status_core(&udid)))
 }
 
 #[no_mangle]

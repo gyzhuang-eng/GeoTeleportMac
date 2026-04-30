@@ -300,6 +300,7 @@ struct StubDeviceAgentService: DeviceAgentServicing {
             isConnected: false,
             connectionSummary: "SELF-CHECK",
             iosVersion: nil,
+            developerModeEnabled: nil,
             deviceName: nil,
             deviceIdentifier: nil,
             serialSuffix: nil,
@@ -319,6 +320,7 @@ struct StubDeviceAgentService: DeviceAgentServicing {
             isConnected: true,
             connectionSummary: "SELF-CHECK",
             iosVersion: "17.4",
+            developerModeEnabled: true,
             deviceName: "Self Check iPhone",
             deviceIdentifier: "self-check-device-id",
             serialSuffix: "0000",
@@ -334,10 +336,34 @@ struct StubDeviceAgentService: DeviceAgentServicing {
             detail: "state=\(ios17Probe.transportState.rawValue)"
         ))
 
+        let ios17DeveloperModeDisabledSnapshot = DeviceSnapshot(
+            isConnected: true,
+            connectionSummary: "SELF-CHECK",
+            iosVersion: "17.4",
+            developerModeEnabled: false,
+            deviceName: "Self Check iPhone",
+            deviceIdentifier: "self-check-device-id",
+            serialSuffix: "0000",
+            vendorID: "0x05ac",
+            productID: "0x12a8",
+            probeSource: "self-check",
+            matchedDeviceCount: 1
+        )
+        let ios17DeveloperModeDisabledProbe = adapter.probeTransport(
+            snapshot: ios17DeveloperModeDisabledSnapshot,
+            tunnelEndpointResult: nil
+        )
+        checks.append(Check(
+            name: "ios17-developer-mode-disabled-blocks-native-rsd",
+            passed: ios17DeveloperModeDisabledProbe.transportState == .unavailable,
+            detail: "state=\(ios17DeveloperModeDisabledProbe.transportState.rawValue)"
+        ))
+
         let unknownVersionSnapshot = DeviceSnapshot(
             isConnected: true,
             connectionSummary: "SELF-CHECK",
             iosVersion: nil,
+            developerModeEnabled: nil,
             deviceName: "Self Check iPhone",
             deviceIdentifier: "self-check-device-id",
             serialSuffix: "0000",
@@ -357,6 +383,7 @@ struct StubDeviceAgentService: DeviceAgentServicing {
             isConnected: true,
             connectionSummary: "SELF-CHECK",
             iosVersion: "16.7",
+            developerModeEnabled: nil,
             deviceName: "Self Check iPhone",
             deviceIdentifier: nil,
             serialSuffix: nil,
@@ -377,6 +404,7 @@ struct StubDeviceAgentService: DeviceAgentServicing {
                 isConnected: true,
                 connectionSummary: "SELF-CHECK",
                 iosVersion: "16.7",
+                developerModeEnabled: nil,
                 deviceName: "Self Check iPhone",
                 deviceIdentifier: "self-check-device-id",
                 serialSuffix: "0000",
@@ -499,6 +527,7 @@ private struct SystemUSBProbe {
     let vendorID: String?
     let productID: String?
     let iosVersion: String?
+    let developerModeEnabled: Bool?
     let matchedDeviceCount: Int
     let source: Source
     let events: [DeviceAgentDiagnosticEvent]
@@ -528,6 +557,7 @@ private struct SystemUSBProbe {
                     vendorID: nil,
                     productID: nil,
                     iosVersion: nil,
+                    developerModeEnabled: nil,
                     matchedDeviceCount: isConnected ? 1 : 0,
                     source: .ioregFallback,
                     events: [
@@ -553,6 +583,7 @@ private struct SystemUSBProbe {
                     vendorID: nil,
                     productID: nil,
                     iosVersion: nil,
+                    developerModeEnabled: nil,
                     matchedDeviceCount: 0,
                     source: .none,
                     events: [
@@ -613,6 +644,7 @@ private struct SystemUSBProbe {
                         vendorID: match.vendorID,
                         productID: match.productID,
                         iosVersion: nil,
+                        developerModeEnabled: nil,
                         matchedDeviceCount: matches.count,
                         source: .systemProfiler,
                         events: [
@@ -754,6 +786,7 @@ private struct SystemUSBProbe {
                     vendorID: probe.vendorID,
                     productID: probe.productID,
                     iosVersion: probe.iosVersion,
+                    developerModeEnabled: probe.developerModeEnabled,
                     matchedDeviceCount: max(probe.matchedDeviceCount, devices.count),
                     source: probe.source,
                     events: probe.events + [DeviceAgentDiagnosticEvent(level: .warning, message: message)],
@@ -763,8 +796,9 @@ private struct SystemUSBProbe {
 
             var resolvedName = match.name
             var resolvedIOSVersion = match.iosVersion
+            var resolvedDeveloperModeEnabled: Bool?
             var resolutionEvents: [DeviceAgentDiagnosticEvent] = []
-            if resolvedIOSVersion == nil, !match.identifier.isEmpty {
+            if !match.identifier.isEmpty {
                 switch NativeDeviceCoreMetadataProbe.fetchDeviceInfo(udid: match.identifier) {
                 case .success(let info):
                     if let deviceName = info.deviceName?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -782,6 +816,18 @@ private struct SystemUSBProbe {
                         resolutionEvents.append(DeviceAgentDiagnosticEvent(
                             level: .warning,
                             message: "Native device-core device-info matched \(resolvedName), but ProductVersion was missing"
+                        ))
+                    }
+                    resolvedDeveloperModeEnabled = info.developerModeEnabled
+                    if let developerModeEnabled = info.developerModeEnabled,
+                       let productVersion = (resolvedIOSVersion ?? info.productVersion),
+                       let major = Int(productVersion.split(separator: ".").first ?? ""),
+                       major >= 17 {
+                        resolutionEvents.append(DeviceAgentDiagnosticEvent(
+                            level: developerModeEnabled ? .info : .warning,
+                            message: developerModeEnabled
+                                ? "Native device-core reports Developer Mode is enabled for iOS \(productVersion)"
+                                : "Native device-core reports Developer Mode is disabled; iOS \(productVersion) location simulation will fail until it is enabled"
                         ))
                     }
                 case .failure(let failure):
@@ -822,6 +868,7 @@ private struct SystemUSBProbe {
                 vendorID: probe.vendorID,
                 productID: probe.productID,
                 iosVersion: resolvedIOSVersion ?? probe.iosVersion,
+                developerModeEnabled: resolvedDeveloperModeEnabled ?? probe.developerModeEnabled,
                 matchedDeviceCount: max(probe.matchedDeviceCount, devices.count),
                 source: probe.source,
                 events: probe.events + [event] + resolutionEvents,
@@ -838,6 +885,7 @@ private struct SystemUSBProbe {
                     vendorID: probe.vendorID,
                     productID: probe.productID,
                     iosVersion: probe.iosVersion,
+                    developerModeEnabled: probe.developerModeEnabled,
                     matchedDeviceCount: probe.matchedDeviceCount,
                     source: probe.source,
                     events: probe.events + [
@@ -857,6 +905,7 @@ private struct SystemUSBProbe {
                 vendorID: probe.vendorID,
                 productID: probe.productID,
                 iosVersion: probe.iosVersion,
+                developerModeEnabled: probe.developerModeEnabled,
                 matchedDeviceCount: probe.matchedDeviceCount,
                 source: probe.source,
                 events: probe.events + [
@@ -903,6 +952,7 @@ struct NativeDeviceCoreResolvedDeviceInfo {
     let uniqueDeviceID: String?
     let deviceClass: String?
     let productType: String?
+    let developerModeEnabled: Bool?
 
     var iosMajorVersion: Int? {
         guard let productVersion else { return nil }
@@ -1087,7 +1137,8 @@ enum NativeDeviceCoreMetadataProbe {
             productVersion: json["productVersion"] as? String,
             uniqueDeviceID: json["uniqueDeviceID"] as? String,
             deviceClass: json["deviceClass"] as? String,
-            productType: json["productType"] as? String
+            productType: json["productType"] as? String,
+            developerModeEnabled: json["developerModeEnabled"] as? Bool
         ))
     }
 
@@ -1280,6 +1331,12 @@ private struct NativeDeviceCoreInjectionTransportAdapter: InjectionTransportServ
         }
 
         if let major = snapshot.iosMajorVersion, major >= 17 {
+            if snapshot.developerModeEnabled == false {
+                return unavailableProbe(
+                    summary: "Developer Mode is disabled; iOS \(snapshot.iosVersion ?? "\(major)") cannot expose the DVT location simulation service.",
+                    nextAction: "Enable Developer Mode on the iPhone in Settings > Privacy & Security > Developer Mode, let it reboot/confirm, then reconnect and refresh before setting location."
+                )
+            }
             return DeviceAgentInjectionTransportProbeResult(
                 transportID: transportID,
                 transportState: .nativeRsd,
@@ -1676,6 +1733,18 @@ private struct DeviceAgentAssessmentFactory {
             readinessGate = .ready
         }
 
+        if let majorStr = probe.iosVersion,
+           let major = Int(majorStr.split(separator: ".").first ?? ""),
+           major >= 17,
+           probe.developerModeEnabled == false {
+            let blocker = "Developer Mode is disabled; iOS \(majorStr) location simulation cannot expose the DVT service required for native RSD injection."
+            blockerCodes.append(.injectionTransportMissing)
+            blockers.append(blocker)
+            nextActions.append("Enable Developer Mode on the iPhone in Settings > Privacy & Security > Developer Mode, let it reboot/confirm, then reconnect and refresh.")
+            readinessSummary = blocker
+            readinessGate = .injectionTransport
+        }
+
         if probe.matchedDeviceCount > 1 {
             blockerCodes.append(.multipleDevices)
             blockers.append("Multiple Apple mobile devices are attached")
@@ -1885,6 +1954,7 @@ private struct SystemUSBProbeResultAdapter {
                     isConnected: probe.isConnected,
                     connectionSummary: NoPythonDeviceSummary.connectionSummary(from: probe),
                     iosVersion: probe.iosVersion,
+                    developerModeEnabled: probe.developerModeEnabled,
                     deviceName: probe.displayName,
                     deviceIdentifier: probe.deviceIdentifier,
                     serialSuffix: probe.serialSuffix,

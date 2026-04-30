@@ -19,6 +19,13 @@ persistent DVT daemon (`ios17-location-daemon`) managed by
 `NativeDeviceCoreIos17LocationController` in the main app process. **Phase B
 exit criteria are fully met.**
 
+For iOS 17+ / iOS 26, location simulation depends on the device exposing the
+DVT service over RSD. That requires Developer Mode on the iPhone and a developer
+image path available to the device. The app now reads `developerModeEnabled`
+from native `device-info` / `developer-mode-status` and blocks the injection
+transport when it is `false`, instead of waiting for
+`ios17-location-daemon` to fail with RSD `ServiceNotFound`.
+
 Phase C code-level work is done:
 - Hardened Runtime enabled, entitlements created, Rust binary bundled at
   `Contents/Helpers/`.
@@ -26,7 +33,9 @@ Phase C code-level work is done:
   (UserDefaults), `GTM_PREFERRED_DEVICE_UDID` env-var bridging.
 - **Honest blockers** — migration-era Xcode / `pymobiledevice3` blockers were
   wired, and current runtime readiness centers on the bundled device core.
-- **Developer Mode guidance** for iOS 16+ in `readinessSummary`.
+- **Developer Mode preflight** for iOS 17+ / iOS 26: native device-core queries
+  `mobile_image_mounter`, propagates `developerModeEnabled` into the session,
+  and blocks native RSD injection until the phone reports Developer Mode enabled.
 - **XCTest harness deleted** — `XcodeTestLocationInjectionTransportAdapter`,
   `XcodeLocationHarnessPackage`, and the harness self-check are gone.
 - **Legacy backend deleted** — `legacyPreview` track, `V3LegacyCLIBackend`,
@@ -39,7 +48,9 @@ Phase C code-level work is done:
 - **Immersive HUD UI redesign** — full-window map surface with floating glass
   controls and fixed `NativeMapView` center/span refresh behavior.
 
-**macOS validation is complete.** The product is ready as an unsigned macOS release. The primary focus now shifts to **Phase F: Windows Port**.
+**macOS validation is complete for the supported preconditions.** iOS 17+ /
+iOS 26 users must enable Developer Mode on the phone before location injection
+can expose DVT. The primary focus now shifts to **Phase F: Windows Port**.
 
 ### Day-1 verification checklist
 
@@ -816,3 +827,15 @@ without trawling git history.
    Current distribution assumes an unsigned app and explicit user bypass of the
    macOS warning. `README.md` now carries product-facing first-run instructions.
    Clean consumer-Mac validation was the main release gate at this point.
+- **2026-04-30 — iOS 26 Developer Mode preflight for native RSD injection.**
+   The iOS 26 failure mode was verified on a connected device:
+   `developer-mode-status` returned `developerModeEnabled:false`,
+   `mounter list` returned no mounted developer image, and
+   `ios17-location-daemon` failed because RSD did not advertise
+   `com.apple.instruments.dtservicehub` (`ServiceNotFound`). Rust
+   `native-device-core` now enables `mobile_image_mounter`, adds
+   `developer-mode-status <udid>`, emits `developerModeEnabled` from
+   `device-info`, and preflights the daemon before creating CDTunnel/RSD/DVT.
+   Swift propagates this into `DeviceSnapshot` and treats iOS 17+ with
+   Developer Mode disabled as an injection transport blocker instead of
+   "Ready For Injection". Added a self-check case for the disabled state.

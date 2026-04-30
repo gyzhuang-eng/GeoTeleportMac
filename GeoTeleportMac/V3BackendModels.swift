@@ -232,6 +232,7 @@ struct DeviceSnapshot: Codable, Equatable {
     let isConnected: Bool
     let connectionSummary: String
     let iosVersion: String?
+    let developerModeEnabled: Bool?
     let deviceName: String?
     let deviceIdentifier: String?
     let serialSuffix: String?

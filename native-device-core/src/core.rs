@@ -1,4 +1,5 @@
 use idevice::services::lockdown::LockdownClient;
+use idevice::services::mobile_image_mounter::ImageMounter;
 use idevice::services::simulate_location::LocationSimulationService;
 use idevice::usbmuxd::{Connection, UsbmuxdAddr, UsbmuxdConnection, UsbmuxdDevice};
 use idevice::IdeviceService;
@@ -27,6 +28,14 @@ pub struct DeviceInfo {
     pub unique_device_id: Option<String>,
     pub device_class: Option<String>,
     pub product_type: Option<String>,
+    pub developer_mode_enabled: Option<bool>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct DeveloperModeStatus {
+    pub udid: String,
+    pub developer_mode_enabled: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -103,9 +112,24 @@ pub async fn device_info_core(udid: &str) -> Result<String, String> {
         unique_device_id: lockdown_string(&mut lockdown, "UniqueDeviceID").await,
         device_class: lockdown_string(&mut lockdown, "DeviceClass").await,
         product_type: lockdown_string(&mut lockdown, "ProductType").await,
+        developer_mode_enabled: query_developer_mode_status_for_device(&device).await.ok(),
     };
 
     serde_json::to_string(&info).map_err(|e| format!("failed to serialize device info: {e}"))
+}
+
+pub async fn developer_mode_status_core(udid: &str) -> Result<String, String> {
+    let developer_mode_enabled = developer_mode_status_value(udid).await?;
+    serde_json::to_string(&DeveloperModeStatus {
+        udid: udid.to_string(),
+        developer_mode_enabled,
+    })
+    .map_err(|e| format!("failed to serialize developer mode status: {e}"))
+}
+
+pub async fn developer_mode_status_value(udid: &str) -> Result<bool, String> {
+    let device = find_usb_device(udid).await?;
+    query_developer_mode_status_for_device(&device).await
 }
 
 pub async fn set_location_core(udid: &str, lat: f64, lon: f64) -> Result<String, String> {
@@ -199,6 +223,17 @@ pub async fn lockdown_string(lockdown: &mut LockdownClient, key: &str) -> Option
         .await
         .ok()
         .and_then(|v| v.as_string().map(|s| s.to_owned()))
+}
+
+async fn query_developer_mode_status_for_device(device: &UsbmuxdDevice) -> Result<bool, String> {
+    let provider = device.to_provider(UsbmuxdAddr::default(), "geoteleport");
+    let mut mounter = ImageMounter::connect(&provider)
+        .await
+        .map_err(|e| format!("failed to connect to mobile image mounter: {}", format_error(e)))?;
+    mounter
+        .query_developer_mode_status()
+        .await
+        .map_err(|e| format!("failed to query Developer Mode status: {}", format_error(e)))
 }
 
 fn is_empty_enumeration_error(message: &str) -> bool {

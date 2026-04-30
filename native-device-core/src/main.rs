@@ -1,8 +1,8 @@
 mod core;
 
 use core::{
-    clear_location_core, device_info_core, enumerate_ios_devices_core, find_usb_device,
-    set_location_core,
+    clear_location_core, developer_mode_status_core, developer_mode_status_value,
+    device_info_core, enumerate_ios_devices_core, find_usb_device, set_location_core,
 };
 use idevice::services::core_device_proxy::CoreDeviceProxy;
 use idevice::services::dvt::location_simulation::LocationSimulationClient;
@@ -23,6 +23,7 @@ async fn main() -> ExitCode {
     match args.next().as_deref() {
         Some("enumerate-ios-devices") => cmd_enumerate().await,
         Some("device-info") => cmd_device_info(args.next().as_deref()).await,
+        Some("developer-mode-status") => cmd_developer_mode_status(args.next().as_deref()).await,
         Some("set-location") => {
             let (udid, lat, lon) = (args.next(), args.next(), args.next());
             cmd_set_location(udid.as_deref(), lat.as_deref(), lon.as_deref()).await
@@ -35,7 +36,7 @@ async fn main() -> ExitCode {
         }
         _ => {
             eprintln!(
-                "usage: geoteleport-device-core <enumerate-ios-devices|device-info <udid>|set-location <udid> <lat> <lon>|clear-location <udid>|ios17-location-daemon <udid>|--version>"
+                "usage: geoteleport-device-core <enumerate-ios-devices|device-info <udid>|developer-mode-status <udid>|set-location <udid> <lat> <lon>|clear-location <udid>|ios17-location-daemon <udid>|--version>"
             );
             ExitCode::from(64)
         }
@@ -65,6 +66,27 @@ async fn cmd_device_info(udid: Option<&str>) -> ExitCode {
         return ExitCode::from(64);
     };
     match device_info_core(udid).await {
+        Ok(output) => {
+            println!("{output}");
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            let resp = core::StatusResponse {
+                status: core::CommandStatus::Error,
+                error: Some(e),
+            };
+            println!("{}", serde_json::to_string(&resp).unwrap());
+            ExitCode::from(1)
+        }
+    }
+}
+
+async fn cmd_developer_mode_status(udid: Option<&str>) -> ExitCode {
+    let Some(udid) = udid else {
+        eprintln!("usage: geoteleport-device-core developer-mode-status <udid>");
+        return ExitCode::from(64);
+    };
+    match developer_mode_status_core(udid).await {
         Ok(output) => {
             println!("{output}");
             ExitCode::SUCCESS
@@ -139,6 +161,22 @@ async fn cmd_ios17_daemon(udid: Option<&str>) -> ExitCode {
 }
 
 async fn ios17_location_daemon(udid: &str) -> ExitCode {
+    match developer_mode_status_value(udid).await {
+        Ok(true) => {}
+        Ok(false) => {
+            eprintln!(
+                "ios17-location-daemon: Developer Mode is disabled. iOS 17+ / iOS 26 location simulation requires Developer Mode plus a mounted DeveloperDiskImage. Enable it on the iPhone in Settings > Privacy & Security > Developer Mode, let the phone reboot/confirm, then reconnect and retry."
+            );
+            return ExitCode::from(1);
+        }
+        Err(e) => {
+            eprintln!(
+                "ios17-location-daemon: could not verify Developer Mode before starting RSD location simulation: {e}"
+            );
+            return ExitCode::from(1);
+        }
+    }
+
     let (mut _adapter_handle, mut remote_server) = match connect_ios17_location_stack(udid).await {
         Ok(stack) => stack,
         Err(e) => {
@@ -275,6 +313,14 @@ async fn connect_ios17_location_stack_once(
         )),
     };
 
+    let dvt_service_name = "com.apple.instruments.dtservicehub";
+    if !rsd.services.contains_key(dvt_service_name) {
+        let advertised_services = summarize_rsd_services(&rsd);
+        return Err(format!(
+            "ios17-location-daemon: DTX service {dvt_service_name} is not advertised over RSD. iOS 17+ / iOS 26 location simulation requires Developer Mode and a mounted DeveloperDiskImage. Advertised RSD services: {advertised_services}"
+        ));
+    }
+
     let remote_server: RemoteServerClient<Box<dyn ReadWrite>> =
         match rsd.connect(&mut adapter_handle).await {
             Ok(server) => server,
@@ -285,6 +331,21 @@ async fn connect_ios17_location_stack_once(
         };
 
     Ok((adapter_handle, remote_server))
+}
+
+fn summarize_rsd_services(rsd: &RsdHandshake) -> String {
+    let mut names: Vec<&str> = rsd.services.keys().map(String::as_str).collect();
+    names.sort_unstable();
+    if names.is_empty() {
+        "none".to_string()
+    } else {
+        let summary = names.iter().take(12).copied().collect::<Vec<_>>().join(", ");
+        if names.len() > 12 {
+            format!("{summary}, ... ({} total)", names.len())
+        } else {
+            summary
+        }
+    }
 }
 
 fn format_error(error: impl fmt::Display + fmt::Debug) -> String {

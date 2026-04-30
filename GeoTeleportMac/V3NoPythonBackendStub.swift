@@ -8,6 +8,7 @@ private final class Ios17BackendState {
     private let lock = NSLock()
     private var _udid: String?
     private var _major: Int?
+    private var _developerModeEnabled: Bool?
 
     let locationController = NativeDeviceCoreIos17LocationController()
 
@@ -25,8 +26,10 @@ private final class Ios17BackendState {
         lock.lock()
         let newUdid = snapshot.deviceIdentifier
         let newMajor = snapshot.iosMajorVersion
+        let newDeveloperModeEnabled = snapshot.developerModeEnabled
         let udidChanged = newUdid != _udid
         _udid = newUdid
+        _developerModeEnabled = newDeveloperModeEnabled
         if udidChanged {
             _major = newMajor
         } else if let newMajor {
@@ -42,10 +45,14 @@ private final class Ios17BackendState {
         lock.lock()
         let currentUdid = _udid
         let currentMajor = _major
+        let currentDeveloperModeEnabled = _developerModeEnabled
         lock.unlock()
 
         guard let udid = currentUdid, !udid.isEmpty else { return nil }
         if let currentMajor {
+            if currentMajor >= 17, currentDeveloperModeEnabled == false {
+                return udid
+            }
             return currentMajor >= 17 ? udid : nil
         }
 
@@ -55,12 +62,24 @@ private final class Ios17BackendState {
             lock.lock()
             if _udid == udid {
                 _major = major
+                _developerModeEnabled = info.developerModeEnabled
             }
             lock.unlock()
             return major >= 17 ? udid : nil
         case .failure:
             return nil
         }
+    }
+
+    func ios17LocationReadinessBlocker(for udid: String) -> String? {
+        lock.lock()
+        let currentMajor = _major
+        let currentDeveloperModeEnabled = _developerModeEnabled
+        lock.unlock()
+
+        guard let currentMajor, currentMajor >= 17 else { return nil }
+        guard currentDeveloperModeEnabled == false else { return nil }
+        return "Developer Mode is disabled for \(udid). iOS \(currentMajor)+ / iOS 26 location simulation requires Developer Mode before the DVT service is exposed. Enable it on the iPhone in Settings > Privacy & Security > Developer Mode, let it reboot/confirm, reconnect, then retry."
     }
 }
 
@@ -97,6 +116,7 @@ struct NoPythonBackendStub: DeviceBackend {
                 isConnected: false,
                 connectionSummary: failure.message.uppercased(),
                 iosVersion: nil,
+                developerModeEnabled: nil,
                 deviceName: nil,
                 deviceIdentifier: nil,
                 serialSuffix: nil,
@@ -121,6 +141,9 @@ struct NoPythonBackendStub: DeviceBackend {
 
     func setLocation(_ request: TeleportRequest) -> Result<LocationCommandExecution, BackendFailure> {
         if let udid = ios17State.ios17OrNewerUDIDIfNeeded() {
+            if let blocker = ios17State.ios17LocationReadinessBlocker(for: udid) {
+                return .failure(.unavailable(blocker))
+            }
             return ios17LocationResult(
                 ios17State.locationController.setLocation(
                     udid: udid,
@@ -151,6 +174,9 @@ struct NoPythonBackendStub: DeviceBackend {
 
     func clearLocation() -> Result<LocationCommandExecution, BackendFailure> {
         if let udid = ios17State.ios17OrNewerUDIDIfNeeded() {
+            if let blocker = ios17State.ios17LocationReadinessBlocker(for: udid) {
+                return .failure(.unavailable(blocker))
+            }
             return ios17LocationResult(
                 ios17State.locationController.clearLocation(udid: udid)
             )
@@ -278,6 +304,7 @@ struct NoPythonBackendStub: DeviceBackend {
                 isConnected: false,
                 connectionSummary: failure.message.uppercased(),
                 iosVersion: nil,
+                developerModeEnabled: nil,
                 deviceName: nil,
                 deviceIdentifier: nil,
                 serialSuffix: nil,
