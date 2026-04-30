@@ -193,6 +193,7 @@ struct ContentView: View {
 
     @State private var isWorking: Bool = false
     @State private var isScanningDeps: Bool = false
+    @State private var isRefreshingSession: Bool = false
 
     private var activeBackendTrack: BackendTrack {
         guard let track = BackendTrack(rawValue: backendTrackRaw),
@@ -210,6 +211,7 @@ struct ContentView: View {
     private var deviceIOSMajor: Int { appModel.deviceIOSMajor }
     private var tunneldRunning: Bool { appModel.tunneldRunning }
     private var needsTunneld: Bool { appModel.needsTunnel }
+    private var isRefreshButtonBusy: Bool { isScanningDeps || isRefreshingSession }
 
     @State private var showDebugLog: Bool = false
     @State private var showDevicePicker: Bool = false
@@ -302,7 +304,10 @@ struct ContentView: View {
                                     )
                                 )
                                 .frame(width: 8, height: 8)
-                            Text(V3ViewPresentation.environmentBadgeText(appModel: appModel))
+                            Text(V3ViewPresentation.environmentBadgeText(
+                                appModel: appModel,
+                                isRefreshingSession: isRefreshingSession
+                            ))
                                 .font(.system(size: 10, weight: .semibold, design: .monospaced))
                                 .foregroundColor(.secondary)
 
@@ -325,13 +330,13 @@ struct ContentView: View {
                                     .foregroundColor(.secondary)
                             }
                             Button(action: manualRefresh) {
-                                Image(systemName: isScanningDeps ? "hourglass" : "arrow.clockwise")
+                                Image(systemName: isRefreshButtonBusy ? "hourglass" : "arrow.clockwise")
                                     .font(.system(size: 11, weight: .semibold))
                                     .foregroundColor(.secondary)
                             }
                             .buttonStyle(.plain)
-                            .disabled(isScanningDeps)
-                            .help(V3ViewPresentation.refreshActionLabel(appModel: appModel))
+                            .disabled(isRefreshButtonBusy)
+                            .help(isRefreshButtonBusy ? "Refresh in progress" : V3ViewPresentation.refreshActionLabel(appModel: appModel))
                         }
                         .padding(.horizontal, 14).padding(.vertical, 10)
                         .background(glassPanel(cornerRadius: 14).shadow(color: .black.opacity(0.3), radius: 10, y: 4))
@@ -1008,22 +1013,56 @@ struct ContentView: View {
     }
 
     private func refreshForCurrentGate(trigger: String, isManual: Bool) {
-        if isWorking { return }
+        if isWorking {
+            if isManual {
+                log("[REFRESH] \(trigger.uppercased()) -> skipped; location command is already running.")
+            }
+            return
+        }
 
         if shouldProbeBackendBootstrap {
             if !isScanningDeps {
                 if isManual {
                     log("[REFRESH] \(trigger.uppercased()) -> probing backend bootstrap")
                 }
-                findDependency()
+                findDependency(isManual: isManual)
+            } else if isManual {
+                log("[REFRESH] \(trigger.uppercased()) -> skipped; backend probe is already running.")
             }
             return
         }
 
+        let scope = sessionRefreshScope(isManual: isManual)
         if isManual {
-            log("[REFRESH] \(trigger.uppercased()) -> \(appModel.manualRefreshLogSummary)")
+            log("[REFRESH] \(trigger.uppercased()) -> \(manualRefreshLogSummary(scope: scope))")
         }
-        refreshDeviceState(scope: appModel.effectiveRefreshScope, deviceFocus: appModel.effectiveDeviceProbeFocus)
+        refreshDeviceState(
+            scope: scope,
+            deviceFocus: appModel.effectiveDeviceProbeFocus,
+            isManual: isManual
+        )
+    }
+
+    private func sessionRefreshScope(isManual: Bool) -> SessionRefreshScope {
+        guard isManual, appModel.backendTrack == .noPythonStub else {
+            return appModel.effectiveRefreshScope
+        }
+        return .full
+    }
+
+    private func manualRefreshLogSummary(scope: SessionRefreshScope) -> String {
+        guard appModel.backendTrack == .noPythonStub else {
+            return appModel.manualRefreshLogSummary
+        }
+        switch scope {
+        case .full:
+            if appModel.effectiveRefreshScope == .full {
+                return appModel.manualRefreshLogSummary
+            }
+            return "running full device + tunnel probe (manual override from \(appModel.effectiveRefreshScope.label))"
+        case .deviceOnly, .tunnelOnly:
+            return appModel.manualRefreshLogSummary
+        }
     }
 
     private var shouldProbeBackendBootstrap: Bool {
@@ -1037,9 +1076,23 @@ struct ContentView: View {
 
     private func refreshDeviceState(
         scope: SessionRefreshScope = .full,
-        deviceFocus: DeviceProbeFocus = .attachment
+        deviceFocus: DeviceProbeFocus = .attachment,
+        isManual: Bool = false,
+        shouldSetIdleWhenComplete: Bool = false
     ) {
-        if isWorking || isScanningDeps { return }
+        if isWorking || isScanningDeps || isRefreshingSession {
+            if isManual {
+                log("[REFRESH] MANUAL -> skipped; a refresh is already running.")
+            }
+            if shouldSetIdleWhenComplete {
+                setStatus(.idle)
+            }
+            return
+        }
+        isRefreshingSession = true
+        if isManual {
+            setStatus(.working("Refreshing session…", "Running \(scope.label) against the device-agent backend."))
+        }
         let existingSnapshot = appModel.deviceSnapshot
         let existingDeviceAssessment = appModel.deviceAssessment
         let existingTunnelState = appModel.tunnelState
@@ -1060,6 +1113,10 @@ struct ContentView: View {
                 )
                 self.applyDeviceSnapshot(result.snapshot)
                 self.applyTunnelState(result.tunnelState)
+                self.isRefreshingSession = false
+                if isManual || shouldSetIdleWhenComplete {
+                    self.setStatus(.idle)
+                }
             }
             for line in result.logLines {
                 self.log(line)
@@ -1068,12 +1125,12 @@ struct ContentView: View {
     }
 
     // 依赖扫描：通过 backend 适配层探测现有 CLI 可用性
-    func findDependency() {
+    func findDependency(isManual: Bool = false) {
         if isScanningDeps { return }
         isScanningDeps = true
         setStatus(.working("Probing \(activeBackendTrack.displayName)…", nil))
 
-            DispatchQueue.global(qos: .userInitiated).async {
+        DispatchQueue.global(qos: .userInitiated).async {
             let result = self.runtimeCoordinator.refreshDependencies()
             var nextRefreshScope: SessionRefreshScope?
             var nextDeviceFocus: DeviceProbeFocus?
@@ -1101,11 +1158,14 @@ struct ContentView: View {
                 DispatchQueue.main.async {
                     self.refreshDeviceState(
                         scope: nextRefreshScope ?? self.appModel.effectiveRefreshScope,
-                        deviceFocus: nextDeviceFocus ?? self.appModel.effectiveDeviceProbeFocus
+                        deviceFocus: nextDeviceFocus ?? self.appModel.effectiveDeviceProbeFocus,
+                        isManual: isManual,
+                        shouldSetIdleWhenComplete: true
                     )
                 }
+            } else {
+                self.setStatus(.idle)
             }
-            self.setStatus(.idle)
         }
     }
 

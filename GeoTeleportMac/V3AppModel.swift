@@ -539,7 +539,10 @@ final class V3AppModel: ObservableObject {
         guard backendTrack == .noPythonStub else {
             return preferredRefreshActionText
         }
-        return [preferredRefreshActionText, refreshActionDetail]
+        let manualOverride = effectiveRefreshScope == .full
+            ? ""
+            : "Manual refresh runs a full device + tunnel probe."
+        return [preferredRefreshActionText, manualOverride, refreshActionDetail]
             .filter { !$0.isEmpty }
             .joined(separator: " — ")
     }

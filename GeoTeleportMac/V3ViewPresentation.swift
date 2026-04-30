@@ -9,7 +9,10 @@ struct StatusDisplayModel {
 }
 
 struct V3ViewPresentation {
-    static func environmentBadgeText(appModel: V3AppModel) -> String {
+    static func environmentBadgeText(appModel: V3AppModel, isRefreshingSession: Bool = false) -> String {
+        if isRefreshingSession {
+            return "ENV: REFRESHING"
+        }
         if appModel.backendTrack == .noPythonStub {
             switch appModel.effectiveRefreshScope {
             case .full:

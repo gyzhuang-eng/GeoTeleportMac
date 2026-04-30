@@ -152,7 +152,7 @@ struct V3RuntimeCoordinator {
                     tunnelState: tunnelProbe.tunnelState,
                     deviceAssessment: existingDeviceAssessment,
                     tunnelAssessment: tunnelProbe.assessment,
-                    logLines: tunnelProbe.events.map(\.logLine)
+                    logLines: ["[REFRESH] Running tunnel probe for \(snapshot.displayName)."] + tunnelProbe.events.map(\.logLine)
                 )
             case .full:
                 let deviceProbe = noPythonBackend.deviceProbe()
@@ -162,7 +162,7 @@ struct V3RuntimeCoordinator {
                     tunnelState: tunnelProbe.tunnelState,
                     deviceAssessment: deviceProbe.assessment,
                     tunnelAssessment: tunnelProbe.assessment,
-                    logLines: deviceProbe.events.map(\.logLine) + tunnelProbe.events.map(\.logLine)
+                    logLines: ["[REFRESH] Running full device + tunnel probe."] + deviceProbe.events.map(\.logLine) + tunnelProbe.events.map(\.logLine)
                 )
             }
         }
@@ -185,7 +185,7 @@ struct V3RuntimeCoordinator {
                     tunnelState: existingTunnelState ?? .notRequired,
                     deviceAssessment: nil,
                     tunnelAssessment: nil,
-                    logLines: []
+                    logLines: ["[REFRESH] Tunnel probe skipped because no connected device was found."]
                 )
             }
             let tunnelState = backend.fetchTunnelState(for: snapshot)
@@ -194,7 +194,7 @@ struct V3RuntimeCoordinator {
                 tunnelState: tunnelState,
                 deviceAssessment: nil,
                 tunnelAssessment: nil,
-                logLines: []
+                logLines: ["[REFRESH] Running tunnel probe for \(snapshot.displayName)."]
             )
         case .full:
             let snapshot = backend.fetchConnectedDevice()
@@ -204,7 +204,7 @@ struct V3RuntimeCoordinator {
                 tunnelState: tunnelState,
                 deviceAssessment: nil,
                 tunnelAssessment: nil,
-                logLines: []
+                logLines: ["[REFRESH] Running full device + tunnel probe."]
             )
         }
     }
