@@ -103,12 +103,12 @@ pub extern "C" fn gte_clear_location(udid: *const c_char) -> *mut c_char {
     ffi_ok!(rt.block_on(clear_location_core(&udid)))
 }
 
+/// # Safety
+/// The `ptr` must have been allocated by Rust and returned from one of the other FFI functions.
 #[no_mangle]
-pub extern "C" fn gte_free_string(ptr: *mut c_char) {
+pub unsafe extern "C" fn gte_free_string(ptr: *mut c_char) {
     if ptr.is_null() {
         return;
     }
-    unsafe {
-        let _ = CString::from_raw(ptr);
-    }
+    let _ = CString::from_raw(ptr);
 }
