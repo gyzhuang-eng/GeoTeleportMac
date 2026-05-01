@@ -1,4 +1,4 @@
-mod core;
+pub mod core;
 
 use core::{
     clear_location_core, developer_mode_status_core, device_info_core,

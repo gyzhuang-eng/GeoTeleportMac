@@ -4,6 +4,7 @@ UserInterfaceState.xcuserstate
 xcuserdata/
 DerivedData/
 build/
+dist/
 .build/
 .swiftpm/
 *.ipa
@@ -14,3 +15,4 @@ build/
 *.dSYM.zip
 .omx/
 native-device-core/target/
+raspberry-pi-host/target/

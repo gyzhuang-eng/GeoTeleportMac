@@ -5,7 +5,7 @@ edition = "2021"
 
 [lib]
 name = "geoteleport_device_core"
-crate-type = ["cdylib", "staticlib"]
+crate-type = ["cdylib", "staticlib", "rlib"]
 
 [[bin]]
 name = "geoteleport-device-core"
