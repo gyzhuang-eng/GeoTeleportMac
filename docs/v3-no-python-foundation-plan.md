@@ -82,10 +82,14 @@ If any check fails, stop and diagnose before writing new code.
 
 Phase C and Phase D (macOS validation) are complete. The macOS app is fully functional as a DMG package containing a bundled Rust helper.
 
-Your first task is to **begin Phase F planning and implementation for Windows**:
-1. **Windows UI Stack:** Decide between WinUI 3 (native) vs Tauri (reusable web UI).
-2. **Host USB Setup:** Determine if usbmuxd (iTunes) is sufficient or if WinUSB/libusbK needs to be integrated for RSD communication.
-3. **Core Integration:** Prepare `native-device-core` compilation as a DLL to bridge via FFI on Windows.
+We have also shipped a **Raspberry Pi Linux host** (`v3/raspberry-pi-port`) that runs headless and exposes the location simulation over a browser UI on the local network (HTTP/HTTPS). It successfully manages the `ios17-location-daemon` stack.
+
+Your next task is to either:
+1. **Automate DDI (DeveloperDiskImage) downloading for the Pi host:** iOS 17+ requires a mounted DDI to expose the DVT service. Currently, users must mount it via Xcode or another tool if it's missing. We need a flow to download and mount it automatically via `native-device-core`.
+2. **Begin Phase F planning and implementation for Windows**:
+   - **Windows UI Stack:** Decide between WinUI 3 (native) vs Tauri (reusable web UI).
+   - **Host USB Setup:** Determine if usbmuxd (iTunes) is sufficient or if WinUSB/libusbK needs to be integrated for RSD communication.
+   - **Core Integration:** Prepare `native-device-core` compilation as a DLL to bridge via FFI on Windows.
 
 ### What is NOT your job right now
 
@@ -387,6 +391,7 @@ use Process (inherently long-running, needs stdin/stdout pipes).
 | C     | DMG packaging, first-run UX            | ✅ DONE       |
 | D     | Consumer-Mac validation                | ✅ DONE       |
 | E     | Cross-platform core extraction         | ✅ DONE       |
+| Pi    | Raspberry Pi Headless Host             | ✅ DONE       |
 | F     | Windows port                           | 🟡 IN PROGRESS (Planning) |
 
 A previous revision of this plan marked Phases 1–3 as "complete in practice."
@@ -827,6 +832,7 @@ without trawling git history.
    Current distribution assumes an unsigned app and explicit user bypass of the
    macOS warning. `README.md` now carries product-facing first-run instructions.
    Clean consumer-Mac validation was the main release gate at this point.
+- **2026-05-01 — Phase Pi: Raspberry Pi Port complete.** Added a separate `raspberry-pi-host` Axum service that wraps `native-device-core` to provide a headless, network-accessible API and browser UI for location simulation. This includes an installer script (`install_pi.sh`) that sets up a `systemd` service. Added HTTPS support via the `axum-server` and `tls-rustls` crates, configurable via `GEOTELEPORT_TLS_CERT` and `GEOTELEPORT_TLS_KEY` environment variables. iOS 17+ and iOS 26 simulate-location paths are functional on Linux through the cross-compiled `geoteleport-device-core` daemon. Next step is either automating DDI downloads to bypass the need for prior Mac/Windows connection or moving onto the native Windows client.
 - **2026-04-30 — iOS 26 Developer Mode preflight for native RSD injection.**
    The iOS 26 failure mode was verified on a connected device:
    `developer-mode-status` returned `developerModeEnabled:false`,
