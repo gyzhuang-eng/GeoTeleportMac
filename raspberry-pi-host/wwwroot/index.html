@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>GeoTeleport Pi</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Raspberry Pi Host</p>
+          <h1>GeoTeleport</h1>
+        </div>
+        <div class="toolbar">
+          <button id="diagnostics" type="button" class="secondary">Diagnostics</button>
+          <button id="refresh" type="button">Refresh</button>
+        </div>
+      </header>
+
+      <section class="panel">
+        <label for="token">API token</label>
+        <input id="token" type="password" autocomplete="off" placeholder="Required when GEOTELEPORT_TOKEN is set" />
+      </section>
+
+      <section class="grid">
+        <div class="panel">
+          <div class="section-title">
+            <h2>Device</h2>
+            <span id="device-count">0 connected</span>
+          </div>
+          <select id="devices" size="8" aria-label="Connected iOS devices"></select>
+          <button id="pair" type="button" class="secondary pair-button">Pair / Trust</button>
+          <dl class="facts">
+            <div>
+              <dt>Name</dt>
+              <dd id="device-name">-</dd>
+            </div>
+            <div>
+              <dt>iOS</dt>
+              <dd id="device-version">-</dd>
+            </div>
+            <div>
+              <dt>UDID</dt>
+              <dd id="device-udid">-</dd>
+            </div>
+          </dl>
+        </div>
+
+        <div class="panel">
+          <div class="section-title">
+            <h2>Location</h2>
+            <span id="status">Idle</span>
+          </div>
+          <div class="fields">
+            <label>
+              Latitude
+              <input id="lat" inputmode="decimal" value="37.3349" />
+            </label>
+            <label>
+              Longitude
+              <input id="lon" inputmode="decimal" value="-122.0090" />
+            </label>
+          </div>
+          <div class="actions">
+            <button id="teleport" type="button">Set Location</button>
+            <button id="clear" type="button" class="secondary">Clear</button>
+          </div>
+          <div class="presets" aria-label="Location presets">
+            <button type="button" data-lat="37.3349" data-lon="-122.0090">Apple Park</button>
+            <button type="button" data-lat="40.7128" data-lon="-74.0060">New York</button>
+            <button type="button" data-lat="35.6812" data-lon="139.7671">Tokyo</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel log-panel">
+        <div class="section-title">
+          <h2>Log</h2>
+          <button id="clear-log" type="button" class="secondary compact">Clear Log</button>
+        </div>
+        <pre id="log"></pre>
+      </section>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>
