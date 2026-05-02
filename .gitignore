@@ -16,3 +16,4 @@ dist/
 .omx/
 native-device-core/target/
 raspberry-pi-host/target/
+.claude/settings.local.json
