@@ -14,6 +14,8 @@ const el = {
   deviceVersion: document.querySelector("#device-version"),
   deviceUdid: document.querySelector("#device-udid"),
   status: document.querySelector("#status"),
+  citySearch: document.querySelector("#city-search"),
+  citySearchBtn: document.querySelector("#city-search-btn"),
   lat: document.querySelector("#lat"),
   lon: document.querySelector("#lon"),
   teleport: document.querySelector("#teleport"),
@@ -22,7 +24,57 @@ const el = {
   log: document.querySelector("#log"),
 };
 
+// Initialize localStorage values
 el.token.value = localStorage.getItem("geoteleportToken") || "";
+state.selectedUdid = localStorage.getItem("geoteleportUdid") || null;
+if (localStorage.getItem("geoteleportLat")) {
+  el.lat.value = localStorage.getItem("geoteleportLat");
+}
+if (localStorage.getItem("geoteleportLon")) {
+  el.lon.value = localStorage.getItem("geoteleportLon");
+}
+
+// Leaflet map initialization
+const map = L.map("map").setView([Number(el.lat.value), Number(el.lon.value)], 12);
+L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> contributors',
+  maxZoom: 19,
+}).addTo(map);
+
+map.on("move", () => {
+  const center = map.getCenter();
+  el.lat.value = center.lat.toFixed(6);
+  el.lon.value = center.lng.toFixed(6);
+  localStorage.setItem("geoteleportLat", el.lat.value);
+  localStorage.setItem("geoteleportLon", el.lon.value);
+});
+
+async function searchCity() {
+  const query = el.citySearch.value.trim();
+  if (!query) return;
+  
+  setStatus("Searching...");
+  try {
+    const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}`);
+    const results = await response.json();
+    if (results && results.length > 0) {
+      const { lat, lon, display_name } = results[0];
+      map.setView([Number(lat), Number(lon)], 12);
+      log(`[GEO] Result: ${display_name}`);
+      setStatus("Idle");
+    } else {
+      throw new Error("No results found");
+    }
+  } catch (err) {
+    log(`[GEO] Error: ${err.message}`);
+    setStatus("Error");
+  }
+}
+
+el.citySearchBtn.addEventListener("click", () => run(searchCity));
+el.citySearch.addEventListener("keypress", (e) => {
+  if (e.key === "Enter") run(searchCity);
+});
 
 function setStatus(message) {
   el.status.textContent = message;
@@ -184,6 +236,7 @@ el.pair.addEventListener("click", () => run(pairDevice));
 
 el.devices.addEventListener("change", () => {
   state.selectedUdid = el.devices.value;
+  localStorage.setItem("geoteleportUdid", state.selectedUdid);
   renderDeviceDetails();
   if (state.selectedUdid) {
     run(() => loadDeviceInfo(state.selectedUdid));
@@ -198,8 +251,11 @@ el.clearLog.addEventListener("click", () => {
 
 document.querySelectorAll("[data-lat][data-lon]").forEach((button) => {
   button.addEventListener("click", () => {
-    el.lat.value = button.dataset.lat;
-    el.lon.value = button.dataset.lon;
+    const lat = button.dataset.lat;
+    const lon = button.dataset.lon;
+    el.lat.value = lat;
+    el.lon.value = lon;
+    map.setView([Number(lat), Number(lon)], 12);
   });
 });
 

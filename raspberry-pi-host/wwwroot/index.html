@@ -4,6 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>GeoTeleport Pi</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <link rel="stylesheet" href="/style.css" />
   </head>
   <body>
@@ -53,14 +54,25 @@
             <h2>Location</h2>
             <span id="status">Idle</span>
           </div>
+          
+          <div class="search-bar">
+            <input id="city-search" type="text" placeholder="Search city..." />
+            <button id="city-search-btn" type="button" class="secondary compact">Search</button>
+          </div>
+
+          <div id="map-container" class="map-container">
+            <div id="map"></div>
+            <div class="map-crosshair"></div>
+          </div>
+
           <div class="fields">
             <label>
               Latitude
-              <input id="lat" inputmode="decimal" value="37.3349" />
+              <input id="lat" inputmode="decimal" value="25.185317" />
             </label>
             <label>
               Longitude
-              <input id="lon" inputmode="decimal" value="-122.0090" />
+              <input id="lon" inputmode="decimal" value="55.281516" />
             </label>
           </div>
           <div class="actions">
@@ -68,9 +80,14 @@
             <button id="clear" type="button" class="secondary">Clear</button>
           </div>
           <div class="presets" aria-label="Location presets">
-            <button type="button" data-lat="37.3349" data-lon="-122.0090">Apple Park</button>
-            <button type="button" data-lat="40.7128" data-lon="-74.0060">New York</button>
-            <button type="button" data-lat="35.6812" data-lon="139.7671">Tokyo</button>
+            <button type="button" data-lat="25.185317" data-lon="55.281516">🇦🇪 DUBAI</button>
+            <button type="button" data-lat="24.340142" data-lon="54.518667">🇦🇪 Abu Dhabi</button>
+            <button type="button" data-lat="20.992498" data-lon="105.944606">🇻🇳 Hanoi</button>
+            <button type="button" data-lat="35.6895" data-lon="139.6917">🇯🇵 Tokyo</button>
+            <button type="button" data-lat="40.7128" data-lon="-74.0060">🇺🇸 New York</button>
+            <button type="button" data-lat="51.5074" data-lon="-0.1278">🇬🇧 London</button>
+            <button type="button" data-lat="48.8566" data-lon="2.3522">🇫🇷 Paris</button>
+            <button type="button" data-lat="22.5431" data-lon="114.0579">🇨🇳 Shenzhen</button>
           </div>
         </div>
       </section>
@@ -83,6 +100,7 @@
         <pre id="log"></pre>
       </section>
     </main>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="/app.js"></script>
   </body>
 </html>
