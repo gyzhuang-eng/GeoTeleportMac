@@ -1,5 +1,7 @@
 # GeoTeleport
 
+![GeoTeleport App Interface](docs/screenshot.png)
+
 GeoTeleport is a tool suite for setting a USB-connected iPhone's simulated GPS location. The V3 architecture is built around a pure-Rust `native-device-core`, eliminating the need for Python, Xcode, Homebrew, `pipx`, or `pymobiledevice3` for end users.
 
 It features two distinct clients powered by the same Rust core:
