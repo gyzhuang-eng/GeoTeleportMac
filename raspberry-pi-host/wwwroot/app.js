@@ -1,12 +1,12 @@
 const state = {
   devices: [],
   selectedUdid: null,
+  lastDeviceCount: null,
 };
 
 const el = {
   refresh: document.querySelector("#refresh"),
   diagnostics: document.querySelector("#diagnostics"),
-  token: document.querySelector("#token"),
   devices: document.querySelector("#devices"),
   pair: document.querySelector("#pair"),
   deviceCount: document.querySelector("#device-count"),
@@ -25,7 +25,6 @@ const el = {
 };
 
 // Initialize localStorage values
-el.token.value = localStorage.getItem("geoteleportToken") || "";
 state.selectedUdid = localStorage.getItem("geoteleportUdid") || null;
 if (localStorage.getItem("geoteleportLat")) {
   el.lat.value = localStorage.getItem("geoteleportLat");
@@ -35,9 +34,11 @@ if (localStorage.getItem("geoteleportLon")) {
 }
 
 // Leaflet map initialization
-const map = L.map("map").setView([Number(el.lat.value), Number(el.lon.value)], 12);
+const map = L.map("map", { zoomControl: false }).setView([Number(el.lat.value), Number(el.lon.value)], 12);
+L.control.zoom({ position: 'bottomright' }).addTo(map);
+
 L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
-  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> contributors',
+  attribution: '&copy; OSM',
   maxZoom: 19,
 }).addTo(map);
 
@@ -59,8 +60,8 @@ async function searchCity() {
     const results = await response.json();
     if (results && results.length > 0) {
       const { lat, lon, display_name } = results[0];
-      map.setView([Number(lat), Number(lon)], 12);
-      log(`[GEO] Result: ${display_name}`);
+      map.flyTo([Number(lat), Number(lon)], 12, { duration: 1.5 });
+      log(`[GEO] Found: ${display_name}`);
       setStatus("Idle");
     } else {
       throw new Error("No results found");
@@ -87,10 +88,6 @@ function log(message) {
 
 async function api(path, options = {}) {
   const headers = new Headers(options.headers || {});
-  const token = el.token.value.trim();
-  if (token) {
-    headers.set("x-geoteleport-token", token);
-  }
   if (options.body && !headers.has("content-type")) {
     headers.set("content-type", "application/json");
   }
@@ -113,7 +110,7 @@ function renderDevices() {
   for (const device of state.devices) {
     const option = document.createElement("option");
     option.value = device.identifier;
-    option.textContent = device.name || device.identifier;
+    option.textContent = device.name ? `${device.name}` : device.identifier;
     el.devices.append(option);
   }
 
@@ -131,6 +128,7 @@ function renderDeviceDetails(info = null) {
   el.deviceVersion.textContent =
     info?.productVersion || device?.operatingSystemVersion || "-";
   el.deviceUdid.textContent = state.selectedUdid || "-";
+  
   const hasDevice = Boolean(state.selectedUdid);
   el.teleport.disabled = !hasDevice;
   el.clear.disabled = !hasDevice;
@@ -148,7 +146,13 @@ async function refreshDevices() {
   setStatus("Refreshing");
   state.devices = await api("/api/devices");
   renderDevices();
-  log(`Found ${state.devices.length} USB iOS device(s)`);
+  
+  // Prevent spamming "Found X USB" on every action if count hasn't actually changed.
+  if (state.lastDeviceCount !== state.devices.length) {
+    log(`Found ${state.devices.length} USB iOS device(s)`);
+    state.lastDeviceCount = state.devices.length;
+  }
+  
   if (state.selectedUdid) {
     await loadDeviceInfo(state.selectedUdid);
   }
@@ -176,13 +180,28 @@ async function setLocation() {
 
   const lat = parseCoordinate(el.lat, "Latitude");
   const lon = parseCoordinate(el.lon, "Longitude");
-  setStatus("Setting location");
-  await api("/api/location", {
-    method: "POST",
-    body: JSON.stringify({ udid, lat, lon }),
-  });
-  log(`Set ${udid} to ${lat}, ${lon}`);
-  setStatus("Idle");
+  
+  const btn = el.teleport;
+  const originalText = btn.textContent;
+  btn.textContent = "Setting...";
+  btn.disabled = true;
+  
+  try {
+    setStatus("Setting location");
+    await api("/api/location", {
+      method: "POST",
+      body: JSON.stringify({ udid, lat, lon }),
+    });
+    log(`Successfully set ${udid} to ${lat}, ${lon}`);
+    setStatus("Idle");
+  } catch(error) {
+    setStatus("Error");
+    log(`Error setting location: ${error.message}`);
+    throw error;
+  } finally {
+    btn.textContent = originalText;
+    btn.disabled = false;
+  }
 }
 
 async function clearLocation() {
@@ -191,10 +210,24 @@ async function clearLocation() {
     throw new Error("No device selected");
   }
 
-  setStatus("Clearing location");
-  await api(`/api/location/${encodeURIComponent(udid)}`, { method: "DELETE" });
-  log(`Cleared location for ${udid}`);
-  setStatus("Idle");
+  const btn = el.clear;
+  const originalText = btn.textContent;
+  btn.textContent = "Clearing...";
+  btn.disabled = true;
+
+  try {
+    setStatus("Clearing location");
+    await api(`/api/location/${encodeURIComponent(udid)}`, { method: "DELETE" });
+    log(`Cleared location for ${udid}`);
+    setStatus("Idle");
+  } catch(error) {
+    setStatus("Error");
+    log(`Error clearing location: ${error.message}`);
+    throw error;
+  } finally {
+    btn.textContent = originalText;
+    btn.disabled = false;
+  }
 }
 
 async function runDiagnostics() {
@@ -222,13 +255,11 @@ async function run(action) {
     await action();
   } catch (error) {
     setStatus("Error");
-    log(error.message);
+    if (!error.message.includes("HTTP")) {
+      log(error.message);
+    }
   }
 }
-
-el.token.addEventListener("input", () => {
-  localStorage.setItem("geoteleportToken", el.token.value.trim());
-});
 
 el.refresh.addEventListener("click", () => run(refreshDevices));
 el.diagnostics.addEventListener("click", () => run(runDiagnostics));
@@ -255,7 +286,7 @@ document.querySelectorAll("[data-lat][data-lon]").forEach((button) => {
     const lon = button.dataset.lon;
     el.lat.value = lat;
     el.lon.value = lon;
-    map.setView([Number(lat), Number(lon)], 12);
+    map.flyTo([Number(lat), Number(lon)], 12, { duration: 1.5 });
   });
 });
 

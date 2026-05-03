@@ -16,39 +16,11 @@
         </div>
         <div class="toolbar">
           <button id="diagnostics" type="button" class="secondary">Diagnostics</button>
-          <button id="refresh" type="button">Refresh</button>
+          <button id="refresh" type="button">Refresh Devices</button>
         </div>
       </header>
 
-      <section class="panel">
-        <label for="token">API token</label>
-        <input id="token" type="password" autocomplete="off" placeholder="Required when GEOTELEPORT_TOKEN is set" />
-      </section>
-
       <section class="grid">
-        <div class="panel">
-          <div class="section-title">
-            <h2>Device</h2>
-            <span id="device-count">0 connected</span>
-          </div>
-          <select id="devices" size="8" aria-label="Connected iOS devices"></select>
-          <button id="pair" type="button" class="secondary pair-button">Pair / Trust</button>
-          <dl class="facts">
-            <div>
-              <dt>Name</dt>
-              <dd id="device-name">-</dd>
-            </div>
-            <div>
-              <dt>iOS</dt>
-              <dd id="device-version">-</dd>
-            </div>
-            <div>
-              <dt>UDID</dt>
-              <dd id="device-udid">-</dd>
-            </div>
-          </dl>
-        </div>
-
         <div class="panel">
           <div class="section-title">
             <h2>Location</h2>
@@ -56,7 +28,7 @@
           </div>
           
           <div class="search-bar">
-            <input id="city-search" type="text" placeholder="Search city..." />
+            <input id="city-search" type="text" placeholder="Search city or coordinate..." />
             <button id="city-search-btn" type="button" class="secondary compact">Search</button>
           </div>
 
@@ -76,25 +48,48 @@
             </label>
           </div>
           <div class="actions">
-            <button id="teleport" type="button">Set Location</button>
+            <button id="teleport" type="button" class="primary">Set Location</button>
             <button id="clear" type="button" class="secondary">Clear</button>
           </div>
           <div class="presets" aria-label="Location presets">
-            <button type="button" data-lat="25.185317" data-lon="55.281516">🇦🇪 DUBAI</button>
-            <button type="button" data-lat="24.340142" data-lon="54.518667">🇦🇪 Abu Dhabi</button>
-            <button type="button" data-lat="20.992498" data-lon="105.944606">🇻🇳 Hanoi</button>
-            <button type="button" data-lat="35.6895" data-lon="139.6917">🇯🇵 Tokyo</button>
-            <button type="button" data-lat="40.7128" data-lon="-74.0060">🇺🇸 New York</button>
-            <button type="button" data-lat="51.5074" data-lon="-0.1278">🇬🇧 London</button>
-            <button type="button" data-lat="48.8566" data-lon="2.3522">🇫🇷 Paris</button>
-            <button type="button" data-lat="22.5431" data-lon="114.0579">🇨🇳 Shenzhen</button>
+            <button type="button" class="secondary" data-lat="25.185317" data-lon="55.281516">🇦🇪 Dubai</button>
+            <button type="button" class="secondary" data-lat="24.340142" data-lon="54.518667">🇦🇪 Abu Dhabi</button>
+            <button type="button" class="secondary" data-lat="20.992498" data-lon="105.944606">🇻🇳 Hanoi</button>
+            <button type="button" class="secondary" data-lat="35.6895" data-lon="139.6917">🇯🇵 Tokyo</button>
+            <button type="button" class="secondary" data-lat="40.7128" data-lon="-74.0060">🇺🇸 New York</button>
+            <button type="button" class="secondary" data-lat="51.5074" data-lon="-0.1278">🇬🇧 London</button>
+            <button type="button" class="secondary" data-lat="48.8566" data-lon="2.3522">🇫🇷 Paris</button>
+            <button type="button" class="secondary" data-lat="22.5431" data-lon="114.0579">🇨🇳 Shenzhen</button>
           </div>
+        </div>
+
+        <div class="panel">
+          <div class="section-title">
+            <h2>Device</h2>
+            <span id="device-count">0 connected</span>
+          </div>
+          <select id="devices" size="8" aria-label="Connected iOS devices"></select>
+          <button id="pair" type="button" class="secondary pair-button">Pair / Trust Device</button>
+          <dl class="facts">
+            <div>
+              <dt>Name</dt>
+              <dd id="device-name">-</dd>
+            </div>
+            <div>
+              <dt>iOS</dt>
+              <dd id="device-version">-</dd>
+            </div>
+            <div>
+              <dt>UDID</dt>
+              <dd id="device-udid" style="font-family: monospace; font-size: 12px;">-</dd>
+            </div>
+          </dl>
         </div>
       </section>
 
       <section class="panel log-panel">
         <div class="section-title">
-          <h2>Log</h2>
+          <h2>Activity Log</h2>
           <button id="clear-log" type="button" class="secondary compact">Clear Log</button>
         </div>
         <pre id="log"></pre>
