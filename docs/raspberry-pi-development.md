@@ -202,27 +202,17 @@ workflow itself. Output artifact `geoteleport-pi-aarch64` contains:
 
 Download from the Actions tab → `scp` to Pi → run `install_pi.sh`.
 
-### 6.2 Local cross-compile on macOS (optional)
+### 6.2 Local cross-compile and deploy from macOS
 
-This is **not yet codified in the repo** (see §10 TODO). Working recipe:
+This repo includes a deployment script (`scripts/deploy_to_pi.sh`) to fast-track development by building on a powerful Mac and pushing the compiled binaries over SSH. This avoids agonizingly slow `cargo build` times on the Pi itself.
 
 ```bash
-brew install aarch64-elf-gcc                   # cross linker
-rustup target add aarch64-unknown-linux-gnu
-
-# Per-crate one-shot (no checked-in config):
-CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-elf-gcc \
-  cargo build --release --target aarch64-unknown-linux-gnu \
-  --manifest-path raspberry-pi-host/Cargo.toml
-
-CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-elf-gcc \
-  cargo build --release --target aarch64-unknown-linux-gnu \
-  --bin geoteleport-device-core \
-  --manifest-path native-device-core/Cargo.toml
+# 1. Edit PI_USER and PI_HOST at the top of scripts/deploy_to_pi.sh if needed
+# 2. Run the script:
+./scripts/deploy_to_pi.sh
 ```
 
-A future commit should drop a `.cargo/config.toml` so this becomes a
-plain `cargo build --target aarch64-unknown-linux-gnu`.
+The script uses `cargo-zigbuild` for seamless cross-compilation to `aarch64-unknown-linux-gnu`, SCPs the binaries to `/tmp` on the Pi, moves them to `/opt/geoteleport/`, and gracefully restarts the `geoteleport` systemd service.
 
 ### 6.3 Native build for testing
 
@@ -331,27 +321,31 @@ Browsers will warn about the self-signed cert; accept once per device.
 
 ### 8.4 Portable / out-of-home use
 
-For taking the Pi outside, configure a Wi-Fi access point so a phone or
-laptop can connect to the Pi directly **without any external network**.
-Raspberry Pi OS Bookworm uses NetworkManager:
+For taking the Pi outside, you do not need a Wi-Fi router. The Raspberry Pi supports mDNS (Bonjour) via `avahi-daemon`, so it is always accessible via `http://<hostname>.local:8080` (e.g., `http://raspberry.local:8080`) as long as the Pi and your control device are on the same network.
 
+**Method A: USB Tethering (Recommended & Most Stable)**
+Since the iPhone is already connected to the Pi via USB for location simulation, use this cable to provide the network:
+1. On the iPhone, go to **Settings -> Personal Hotspot**.
+2. Turn on **Allow Others to Join**.
+3. If prompted, choose **USB Only**.
+The Pi's `NetworkManager` will automatically pick up the iPhone's network connection. Simply open Safari on the phone and go to `http://raspberry.local:8080`.
+
+**Method B: iPhone Wi-Fi Hotspot**
+If you prefer not to tether via USB, connect the Pi to your iPhone's Wi-Fi hotspot in advance:
+```bash
+sudo nmcli dev wifi connect 'Your iPhone Name' password 'HotspotPassword'
+```
+When outside, simply power on the Pi and turn on your phone's Personal Hotspot. The Pi will connect automatically.
+
+**Method C: Pi as a Wi-Fi Access Point**
+Alternatively, the Pi itself can broadcast a hotspot:
 ```bash
 sudo nmcli device wifi hotspot ifname wlan0 ssid GeoPi password 'YourStrongPwd'
 sudo nmcli connection modify Hotspot \
   connection.autoconnect yes \
   connection.autoconnect-priority 100
 ```
-
-Default network is `10.42.0.0/24`; the Pi is `10.42.0.1`. Reach the UI
-at `http://10.42.0.1:8080`. Switching back to home Wi-Fi:
-
-```bash
-sudo nmcli connection down Hotspot
-sudo nmcli connection up <home-ssid>
-```
-
-A future commit should ship this as a helper command in
-`scripts/install_pi.sh` (see §10 TODO).
+Then connect your phone to `GeoPi` and access `http://10.42.0.1:8080`.
 
 ### 8.5 Updates
 
@@ -445,7 +439,7 @@ Read these in order:
 - `raspberry-pi-host/src/main.rs` — Axum router, auth, state, daemon
   manager, static-asset serving. ~600 lines.
 - `raspberry-pi-host/wwwroot/index.html` + `app.js` + `style.css` —
-  static UI. Plain HTML/JS/CSS, no bundler.
+  static UI with a glassmorphism theme. Plain HTML/JS/CSS, no bundler.
 - `native-device-core/src/main.rs` — CLI entry points incl.
   `ios17-location-daemon`.
 - `native-device-core/src/core.rs` — shared Rust device-core logic
@@ -482,6 +476,7 @@ cargo build --release --manifest-path raspberry-pi-host/Cargo.toml
 
 ## 13. Change log for this plan
 
+- **2026-05-03 — UI redesign & deployment ergonomics.** Redesigned the web UI with a macOS-style glassmorphism aesthetic. Codified cross-compilation and SSH deployment into `scripts/deploy_to_pi.sh`. Added documentation for USB-tethered portable mDNS access.
 - **2026-05-02 — Initial development doc.** Replaces the earlier
   `raspberry-pi-deployment-plan.md` skeleton with a comprehensive plan
   covering architecture, deployment, configuration, ops, API,
