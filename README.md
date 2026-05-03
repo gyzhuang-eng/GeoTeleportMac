@@ -1,12 +1,20 @@
 # GeoTeleport
 
-![GeoTeleport App Interface](docs/screenshot.png)
-
 GeoTeleport is a tool suite for setting a USB-connected iPhone's simulated GPS location. The V3 architecture is built around a pure-Rust `native-device-core`, eliminating the need for Python, Xcode, Homebrew, `pipx`, or `pymobiledevice3` for end users.
 
 It features two distinct clients powered by the same Rust core:
 1. **GeoTeleportMac:** A native macOS SwiftUI app.
 2. **Raspberry Pi Host:** A headless, portable Linux daemon with a beautiful web UI for on-the-go simulation.
+
+## Previews
+
+### 1. GeoTeleportMac
+*(Replace the image below with your latest macOS App screenshot)*
+![GeoTeleportMac App Interface](docs/mac-app-screenshot.png)
+
+### 2. Raspberry Pi Host Web UI
+*(Replace the image below with your latest Raspberry Pi Web UI screenshot)*
+![Raspberry Pi Web UI](docs/pi-web-screenshot.png)
 
 ## Features & Compatibility
 
