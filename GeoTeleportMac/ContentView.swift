@@ -179,6 +179,7 @@ struct ContentView: View {
     @StateObject private var appModel = V3AppModel()
     @StateObject private var diagnostics = V3DiagnosticsStore()
     @StateObject private var statusStore = V3StatusStore()
+    @StateObject private var cityStore = CityStore()
     @AppStorage("v3.backendTrack") private var backendTrackRaw: String = BackendTrack.primaryTrack.rawValue
     private let backendProvider = V3BackendProvider()
     private var activeBackend: DeviceBackend { backendProvider.backend(for: activeBackendTrack) }
@@ -215,6 +216,8 @@ struct ContentView: View {
 
     @State private var showDebugLog: Bool = false
     @State private var showDevicePicker: Bool = false
+    @State private var editingCity: CustomCity?
+    @State private var showResetPresetsConfirmation: Bool = false
 
     @State private var region = MKCoordinateRegion(
         center: CLLocationCoordinate2D(latitude: 25.185317, longitude: 55.281516),
@@ -384,18 +387,9 @@ struct ContentView: View {
                         .background(glassPanel(cornerRadius: 16).shadow(color: .black.opacity(0.3), radius: 10, y: 4))
 
                         // 预设地点网络
-                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
-                            LocationButton(flag: "🇦🇪", name: "DUBAI",      lat: "25.185317", lon: "55.281516",  color: .orange)
-                            LocationButton(flag: "🇦🇪", name: "Abu Dhabi",  lat: "24.340142", lon: "54.518667",  color: .blue)
-                            LocationButton(flag: "🇻🇳", name: "Hanoi",      lat: "20.992498", lon: "105.944606", color: .purple)
-                            LocationButton(flag: "🇯🇵", name: "Tokyo",      lat: "35.6895",   lon: "139.6917",   color: .pink)
-                            LocationButton(flag: "🇺🇸", name: "New York",   lat: "40.7128",   lon: "-74.0060",   color: .cyan)
-                            LocationButton(flag: "🇬🇧", name: "London",     lat: "51.5074",   lon: "-0.1278",    color: .green)
-                            LocationButton(flag: "🇫🇷", name: "Paris",      lat: "48.8566",   lon: "2.3522",     color: .indigo)
-                            LocationButton(flag: "🇨🇳", name: "Shenzhen",   lat: "22.5431",   lon: "114.0579",   color: .red)
-                        }
-                        .padding(14)
-                        .background(glassPanel(cornerRadius: 16).shadow(color: .black.opacity(0.3), radius: 10, y: 4))
+                        cityPresetsGrid
+                            .padding(14)
+                            .background(glassPanel(cornerRadius: 16).shadow(color: .black.opacity(0.3), radius: 10, y: 4))
                     }
                     .frame(width: 380)
                 }
@@ -528,11 +522,146 @@ struct ContentView: View {
                 performScheduledRefresh()
             }
         }
+        .sheet(item: $editingCity) { city in
+            let isExisting = cityStore.cities.contains(where: { $0.id == city.id })
+            CityEditorSheet(
+                initialDraft: city,
+                title: isExisting ? "Edit Preset" : "New Preset",
+                onSave: { saved in
+                    if isExisting {
+                        cityStore.update(saved)
+                        log("[USER] Updated preset: \(saved.name)")
+                    } else {
+                        cityStore.add(saved)
+                        log("[USER] Added preset: \(saved.name)")
+                    }
+                    editingCity = nil
+                },
+                onCancel: { editingCity = nil },
+                onDelete: isExisting ? {
+                    cityStore.delete(city.id)
+                    log("[USER] Deleted preset: \(city.name)")
+                    editingCity = nil
+                } : nil
+            )
+        }
+        .confirmationDialog(
+            "Reset all presets to defaults?",
+            isPresented: $showResetPresetsConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Reset", role: .destructive) {
+                cityStore.resetToDefaults()
+                log("[USER] Presets reset to defaults")
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Your saved presets will be replaced with the built-in set.")
+        }
         .onChange(of: appModel.sessionState) { _, newState in
             if case .multipleDevices = newState, !appModel.availableDevices.isEmpty {
                 showDevicePicker = true
             }
         }
+    }
+
+    // MARK: - City presets
+
+    private var cityPresetsGrid: some View {
+        let columns = [
+            GridItem(.flexible(), spacing: 10),
+            GridItem(.flexible(), spacing: 10),
+            GridItem(.flexible(), spacing: 10),
+            GridItem(.flexible(), spacing: 10),
+        ]
+        return VStack(spacing: 8) {
+            LazyVGrid(columns: columns, spacing: 10) {
+                ForEach(cityStore.cities) { city in
+                    CityPresetTile(city: city) { applyCityPreset(city) }
+                        .contextMenu { presetContextMenu(for: city) }
+                }
+                AddCityTile { editingCity = makeNewCityDraft() }
+                    .contextMenu {
+                        Button {
+                            editingCity = makeNewCityDraft()
+                        } label: {
+                            Label("New from Current Coordinates", systemImage: "plus.circle")
+                        }
+                        Divider()
+                        Button {
+                            showResetPresetsConfirmation = true
+                        } label: {
+                            Label("Reset Presets to Defaults", systemImage: "arrow.uturn.left")
+                        }
+                    }
+            }
+            if cityStore.cities.isEmpty {
+                Text("Drop a pin on the map, then tap ＋ to save it.")
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                    .padding(.top, 2)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func presetContextMenu(for city: CustomCity) -> some View {
+        Button {
+            applyCityPreset(city)
+        } label: {
+            Label("Use", systemImage: "scope")
+        }
+        Button {
+            editingCity = city
+        } label: {
+            Label("Edit…", systemImage: "pencil")
+        }
+        if let idx = cityStore.cities.firstIndex(where: { $0.id == city.id }) {
+            if idx > 0 {
+                Button {
+                    cityStore.move(city.id, by: -1)
+                } label: {
+                    Label("Move Left", systemImage: "arrow.left")
+                }
+            }
+            if idx < cityStore.cities.count - 1 {
+                Button {
+                    cityStore.move(city.id, by: 1)
+                } label: {
+                    Label("Move Right", systemImage: "arrow.right")
+                }
+            }
+        }
+        Divider()
+        Button(role: .destructive) {
+            cityStore.delete(city.id)
+            log("[USER] Deleted preset: \(city.name)")
+        } label: {
+            Label("Delete", systemImage: "trash")
+        }
+    }
+
+    private func applyCityPreset(_ city: CustomCity) {
+        region.center = CLLocationCoordinate2D(latitude: city.latitude, longitude: city.longitude)
+        region.span = MKCoordinateSpan(latitudeDelta: 0.008, longitudeDelta: 0.008)
+        latitude = String(format: "%.6f", city.latitude)
+        longitude = String(format: "%.6f", city.longitude)
+        log("[USER] Selected Preset: \(city.name)")
+    }
+
+    private func makeNewCityDraft() -> CustomCity {
+        let lat = Double(latitude) ?? region.center.latitude
+        let lon = Double(longitude) ?? region.center.longitude
+        let palette = CityColorTag.allCases
+        let usedColors = Set(cityStore.cities.map { $0.colorTag })
+        let preferred = palette.first(where: { !usedColors.contains($0) }) ?? palette.randomElement() ?? .blue
+        return CustomCity(
+            name: "",
+            flag: "📍",
+            latitude: lat,
+            longitude: lon,
+            colorTag: preferred
+        )
     }
 
 
@@ -1446,54 +1575,4 @@ struct ContentView: View {
         }
     }
 
-    func LocationButton(flag: String, name: String, lat: String, lon: String, color: Color) -> some View {
-        Button(action: {
-            if let lLat = Double(lat), let lLon = Double(lon) {
-                self.region.center = CLLocationCoordinate2D(latitude: lLat, longitude: lLon)
-                self.region.span = MKCoordinateSpan(latitudeDelta: 0.008, longitudeDelta: 0.008)
-                self.latitude = lat; self.longitude = lon
-                self.log("[USER] Selected Preset: \(name)")
-            }
-        }) {
-            VStack(spacing: 3) {
-                Text(flag)
-                    .font(.system(size: 20))
-                Text(name)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(.primary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 10)
-            .background(
-                ZStack {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(
-                            LinearGradient(
-                                colors: [color.opacity(0.55), color.opacity(0.28)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(.regularMaterial)
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(
-                            LinearGradient(
-                                colors: [Color.white.opacity(0.18), Color.clear],
-                                startPoint: .top,
-                                endPoint: .center
-                            )
-                        )
-                }
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(color.opacity(0.50), lineWidth: 1)
-            )
-            .shadow(color: color.opacity(0.18), radius: 5, x: 0, y: 2)
-        }.buttonStyle(.plain)
-    }
 }
